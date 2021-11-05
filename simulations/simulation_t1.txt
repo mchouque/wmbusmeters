@@ -29,8 +29,15 @@ telegram=|1844AE4C4455223368077A55000000|041389E20100023B0000|
 # Test amiplus/apator electricity meter
 
 telegram=|4E4401061010101002027A00004005|2F2F0E035040691500000B2B300300066D00790C7423400C78371204860BABC8FC100000000E833C8074000000000BAB3C0000000AFDC9FC0136022F2F2F2F2F|
-{"media":"electricity","meter":"amiplus","name":"MyElectricity1","id":"10101010","total_energy_consumption_kwh":15694.05,"current_power_consumption_kw":0.33,"total_energy_production_kwh":7.48,"current_power_production_kw":0,"device_date_time":"2019-03-20 12:57","timestamp":"1111-11-11T11:11:11Z"}
-|MyElectricity1;10101010;15694.050000;0.330000;7.480000;0.000000;1111-11-11 11:11.11
+{"media":"electricity","meter":"amiplus","name":"MyElectricity1","id":"10101010","total_energy_consumption_kwh":15694.05,"current_power_consumption_kw":0.33,"total_energy_production_kwh":7.48,"current_power_production_kw":0,"voltage_at_phase_1_v":236,"voltage_at_phase_2_v":0,"voltage_at_phase_3_v":0,"device_date_time":"2019-03-20 12:57","timestamp":"1111-11-11T11:11:11Z"}
+|MyElectricity1;10101010;15694.050000;0.330000;7.480000;0.000000;236.000000;0.000000;0.000000;1111-11-11 11:11.11
+
+# Test amiplus/apator electricity meter with three phase voltages
+
+telegram=|5E44B6105843250000027A2A005005|2F2F0C7835221400066D404708AC2A400E032022650900000E833C0000000000001B2B9647000B2B5510000BAB3C0000000AFDC9FC0135020AFDC9FC0245020AFDC9FC0339020BABC8FC100000002F2F|
+{"media":"electricity","meter":"amiplus","name":"MyElectricity2","id":"00254358","total_energy_consumption_kwh":9652.22,"current_power_consumption_kw":1.055,"total_energy_production_kwh":0,"current_power_production_kw":0,"voltage_at_phase_1_v":235,"voltage_at_phase_2_v":245,"voltage_at_phase_3_v":239,"device_date_time":"2021-10-12 08:07","timestamp":"1111-11-11T11:11:11Z"}
+|MyElectricity2;00254358;9652.220000;1.055000;0.000000;0.000000;235.000000;245.000000;239.000000;1111-11-11 11:11.11
+
 
 # Test MKRadio3 T1 telegrams
 
@@ -129,10 +136,20 @@ telegram=|4E44B4098686868613077AF0004005|2F2F0C1366380000046D27287E2A0F150E00000
 {"media":"water","meter":"hydrodigit","name":"HydrodigitWater","id":"86868686","total_m3":3.866,"meter_datetime":"2019-10-30 08:39","timestamp":"1111-11-11T11:11:11Z"}
 |HydrodigitWater;86868686;3.866000;2019-10-30 08:39;1111-11-11 11:11.11
 
+# Test another pair of BMeters HydroDigit water telegram
+telegram=|3044B4090123456713067A190020052F2F|0C1315000000046D0136A7270F050B000000002F2F2F2F2F2F2F2F2F2F2F69E5|
+{"media":"warm water","meter":"hydrodigit","name":"HydrodigitWater2","id":"67452301","total_m3":0.015,"meter_datetime":"2021-07-07 22:01","timestamp":"1111-11-11T11:11:11Z"}
+|HydrodigitWater2;67452301;0.015000;2021-07-07 22:01;1111-11-11 11:11.11
+
 # Test Q400 water telegram (encrypted)
 telegram=|2E4409077272727210077AD7102005CC2FF08D057E306D8C3078AE44AD6E3D37F8515B92FB068347783DFBB25C3C28|
-{"media":"water","meter":"q400","name":"Q400Water","id":"72727272","total_m3":0,"set_date":"2019-12-01","consumption_at_set_date_m3":0,"timestamp":"1111-11-11T11:11:11Z"}
+{"media":"water","meter":"q400","name":"Q400Water","id":"72727272","total_m3":0,"set_date":"2019-12-01","consumption_at_set_date_m3":0,"meter_datetime":"","flow_m3h":0,"forward_flow_m3h":0,"backward_flow_m3h":0,"flow_temperature_c":0,"set_forward_flow_m3h":0,"set_backward_flow_m3h":0,"timestamp":"1111-11-11T11:11:11Z"}
 |Q400Water;72727272;0.000000;1111-11-11 11:11.11
+
+# Test Axioma W1 telegram with additional fields compared to the older q400 meter.
+telegram=|5E4409077372727210077A710050052F2F|046D0110A92704130000000004933B0000000004933C00000000023B000002592A0A446D0000A12744130000000044933B0000000044933C0000000001FD74622F2F2F2F2F2F2F2F2F2F2F2F2F2F|
+{"media":"water","meter":"q400","name":"AxiomaWater","id":"72727273","total_m3":0,"set_date":"2021-07-01","consumption_at_set_date_m3":0,"meter_datetime":"2021-07-09","flow_m3h":0,"forward_flow_m3h":0,"backward_flow_m3h":0,"flow_temperature_c":26.02,"set_forward_flow_m3h":0,"set_backward_flow_m3h":0,"timestamp":"1111-11-11T11:11:11Z"}
+|AxiomaWater;72727273;0.000000;1111-11-11 11:11.11
 
 # Test electricity meter with eBZ wMB E01.
 telegram=|5B445A149922992202378C20F6900F002C25BC9E0000BF48954821BC508D72992299225A140102F6003007102F2F040330F92A0004A9FF01FF24000004A9FF026A29000004A9FF03460600000DFD11063132333435362F2F2F2F2F2F|
@@ -218,8 +235,8 @@ telegram=|aa4424347677787950077ac10000202f2f041306070000046d1e31b12104fd17000000
 
 # Test Gran-System-S electricity meter 101
 telegram=||7844731e78610418010278046d0f13bc21040394030000841003690300008420032b00000084300300000000848010030000000084016d0000bc2184010394030000841103690300008421032b00000084310300000000848110030000000004fd482e09000004fd5b0000000002fb2d861304fd1700000201|
-{"media":"electricity","meter":"gransystems","name":"Gran101","id":"18046178","total_energy_consumption_kwh":0.916,"voltage_at_phase_1_v":235,"voltage_at_phase_2_v":nan,"voltage_at_phase_3_v":nan,"currrent_at_phase_1_a":0,"currrent_at_phase_2_a":nan,"currrent_at_phase_3_a":nan,"frequency_hz":49.98,"status":"OK","timestamp":"1111-11-11T11:11:11Z"}
-|Gran101;18046178;0.916000;235.000000;nan;nan;0.000000;nan;nan;49.980000;OK;1111-11-11 11:11.11
+{"media":"electricity","meter":"gransystems","name":"Gran101","id":"18046178","total_energy_consumption_kwh":0.916,"voltage_at_phase_1_v":235,"voltage_at_phase_2_v":0,"voltage_at_phase_3_v":0,"currrent_at_phase_1_a":0,"currrent_at_phase_2_a":0,"currrent_at_phase_3_a":0,"frequency_hz":49.98,"status":"OK","timestamp":"1111-11-11T11:11:11Z"}
+|Gran101;18046178;0.916000;235.000000;0.000000;0.000000;0.000000;0.000000;0.000000;49.980000;OK;1111-11-11 11:11.11
 
 # Test Gran-System-S electricity meter 301
 telegram=||9e44731e17011020010278046d0813bc21040300000000841003000000008420030000000084300300000000848010030000000084016d0000bc218401030000000084110300000000842103000000008431030000000084811003000000008440fd4825090000848040fd480000000084c040fd48000000008440fd5b00000000848040fd5b0000000084c040fd5b0000000002fb2d881304fd1700000101|
@@ -240,3 +257,43 @@ telegram=|51440186010905001837721956880101064004DA000020026CA9220E01779924110300
 telegram=|1E44A511909192937B077A9F0010052F2F|04130347030002FD1700002F2F2F|
 {"media":"water","meter":"dme_07","name":"DigiWasser","id":"93929190","total_m3":214.787,"status":"OK","timestamp":"1111-11-11T11:11:11Z"}
 |DigiWasser;93929190;214.787000;OK;1111-11-11 11:11.11
+
+# Test IZAR RS 868 water meter
+telegram=|1E4424238B07797389607A8F00107D|041312170100426CBF23441344100100|
+{"media":"water","meter":"hydrus","name":"HydrusIzarRS","id":"60897379","total_m3":71.442,"total_tariff1_m3":0,"total_tariff2_m3":0,"max_flow_m3h":0,"flow_temperature_c":127,"external_temperature_c":0,"current_date":"","total_at_date_m3":69.7,"total_tariff1_at_date_m3":0,"total_tariff2_at_date_m3":0,"at_date":"2021-03-31 00:00","actuality_duration_s":0,"operating_time_h":0,"remaining_battery_life_y":0,"status":"OK","timestamp":"1111-11-11T11:11:11Z"}
+|HydrusIzarRS;60897379;71.442000;0.000000;OK;1111-11-11 11:11.11
+
+# Test IZAR RS 868 water meter warm
+telegram=|1E4424238B06204790607A2A0010D8|0413DDC00000426CBF23441382BB0000|
+{"media":"warm water","meter":"hydrus","name":"HydrusIzarRSWarm","id":"60904720","total_m3":49.373,"total_tariff1_m3":0,"total_tariff2_m3":0,"max_flow_m3h":0,"flow_temperature_c":127,"external_temperature_c":0,"current_date":"","total_at_date_m3":48.002,"total_tariff1_at_date_m3":0,"total_tariff2_at_date_m3":0,"at_date":"2021-03-31 00:00","actuality_duration_s":0,"operating_time_h":0,"remaining_battery_life_y":0,"status":"OK","timestamp":"1111-11-11T11:11:11Z"}
+|HydrusIzarRSWarm;60904720;49.373000;0.000000;OK;1111-11-11 11:11.11
+
+# Test another Diehl branded meter with the izar protocol
+telegram=|19442423850798160018A2410100133EBBD44081053F243A82A3|
+{"media":"water","meter":"izar","name":"IzarWater4","id":"18001698","prefix":"","serial_number":"000000","total_m3":835.689,"last_month_total_m3":820.329,"last_month_measure_date":"2021-09-01","remaining_battery_life_y":0.5,"current_alarms":"no_alarm","previous_alarms":"no_alarm","transmit_period_s":8,"manufacture_year":"0","timestamp":"1111-11-11T11:11:11Z"}
+|IzarWater4;18001698;;000000;835.689000;820.329000;2021-09-01;0.500000;no_alarm;no_alarm;8.000000;0;1111-11-11 11:11.11
+
+# Test Aventies Water Meter
+telegram=76442104710007612507727100076121042507B5006005E2E95A3C2A1279A5415E6732679B43369FD5FDDDD783EEEBB48236D34E7C94AF0A18A5FDA5F7D64111EB42D4D891622139F2952F9D12A20088DFA4CF8123871123EE1F6C1DCEA414879DDB4E05E508F1826D7EFBA6964DF804C9261EA23BBF03
+{"media":"water","meter":"aventieswm","name":"Votten","id":"61070071","total_m3":466.472,"consumption_at_set_date_1_m3":465.96,"consumption_at_set_date_2_m3":458.88,"consumption_at_set_date_3_m3":449.65,"consumption_at_set_date_4_m3":442.35,"consumption_at_set_date_5_m3":431.07,"consumption_at_set_date_6_m3":423.98,"consumption_at_set_date_7_m3":415.23,"consumption_at_set_date_8_m3":409.03,"consumption_at_set_date_9_m3":400.79,"consumption_at_set_date_10_m3":393.2,"consumption_at_set_date_11_m3":388.63,"consumption_at_set_date_12_m3":379.26,"consumption_at_set_date_13_m3":371.26,"consumption_at_set_date_14_m3":357.84,"error_flags":"","timestamp":"1111-11-11T11:11:11Z"}
+|Votten;61070071;466.472000;;1111-11-11 11:11.11
+
+# Test Unismart Gas Meter
+telegram=|6044B8059430040001037A1D005085E2B670BCF1A5C87E0C1A51DA18924EF984613DA2A9CD39D8F4C7208326C76D42DBEADF80D574192B71BD7C4F56A7F1513151768A9DB804883B28CB085CA2D0F7438C361CB9E2734712ED9BFBB2A14EF55208|
+{"media":"gas","meter":"unismart","name":"GasMeter","id":"00043094","fabrication_no":"3162296","total_date_time":"2021-09-15 13:18","total_m3":917,"target_date_time":"2021-09-01 06:00","target_m3":911.32,"version":"UGG4","device_date_time":"2021-09-15 13:18","suppler_info":"00","status":"F00C","parameter_set":"02","other_int":20,"timestamp":"1111-11-11T11:11:11Z"}
+|GasMeter;00043094;917.000000;911.320000;1111-11-11 11:11.11
+
+# Test Hydrocal M3 heat/cooling meter
+telegram=|8E44B409747372710B0D7A798080052F2F|0C0E59600100046D1D36B9290C13679947000C0E000000000C13590000000C13000000000C13000000000A5A18020A5E11020F823D06003D06003D06003D0600140600620500480400E402001601000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002F2F|
+{"media":"heat/cooling load","meter":"hydrocalm3","name":"HeatCool","id":"71727374","total_heating_kwh":4460.833333,"total_cooling_kwh":0,"device_date_time":"2021-09-25 22:29","total_heating_m3":479.967,"total_cooling_m3":0.059,"c1_volume_m3":0,"c2_volume_m3":0,"supply_temperature_c":21.8,"return_temperature_c":21.1,"timestamp":"1111-11-11T11:11:11Z"}
+|HeatCool;71727374;4460.833333;0.000000;1111-11-11 11:11.11
+
+# Test Weptech Munia temperature hygrometer
+telegram=|2E44B05C82340100021B7A460000002F2F0A6601020AFB1A570602FD971D00002F2F2F2F2F2F2F2F2F2F2F2F2F2F2F|
+{"media":"room sensor","meter":"munia","name":"TempoHygro","id":"00013482","current_temperature_c":20.1,"current_relative_humidity_rh":65.7,"timestamp":"1111-11-11T11:11:11Z"}
+|TempoHygro;00013482;20.100000;65.700000;1111-11-11 11:11.11
+
+# Test QHeat heat meter
+telegram=|3C449344957002372337725880226793442304DC0000200C05043900004C0500000000426C9F2CCC080551070000C2086CBE29326CFFFF046D280DB62A|
+{"media":"heat","meter":"qheat","name":"QHeato","id":"67228058","total_energy_consumption_kwh":390.4,"last_month_date":"2021-09-30 00:00","last_month_energy_consumption_kwh":75.1,"las_year_date":"2020-12-31 00:00","last_year_energy_consumption_kwh":0,"device_date_time":"2021-10-22 13:40","device_error_date":"2127-15-31 00:00","timestamp":"1111-11-11T11:11:11Z"}
+|QHeato;67228058;390.400000;2021-09-30 00:00;75.100000;1111-11-11 11:11.11

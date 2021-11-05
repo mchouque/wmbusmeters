@@ -15,6 +15,7 @@
  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include"aes.h"
 #include"aescmac.h"
 #include"cmdline.h"
 #include"config.h"
@@ -39,6 +40,9 @@ void test_periods();
 void test_devices();
 void test_meters();
 void test_months();
+void test_aes();
+void test_sbc();
+void test_hex();
 
 int main(int argc, char **argv)
 {
@@ -66,6 +70,10 @@ int main(int argc, char **argv)
     test_kdf();
     test_periods();
     test_months();
+    test_aes();
+    test_sbc();
+    test_hex();
+
     return 0;
 }
 
@@ -543,7 +551,7 @@ void testd(string arg, bool xok, string xalias, string xfile, string xtype, stri
     }
     if (ok == false) return;
 
-    if (d.alias != xalias ||
+    if (d.bus_alias != xalias ||
         d.file != xfile ||
         toString(d.type) != xtype ||
         d.id != xid ||
@@ -782,18 +790,54 @@ void testm(string arg, bool xok,
         to_string(mi.bps) != xbps ||
         mi.link_modes.hr() != xlm)
     {
-        printf("ERROR in meter parsing parts \"%s\"\n", arg.c_str());
+        printf("ERROR in meter parsing parts \"%s\" - got (driver: %s, extras: %s, bus: %s, bbps: %s, linkmodes: %s)\n", arg.c_str(), toString(mi.driver).c_str(), mi.extras.c_str(), mi.bus.c_str(), to_string(mi.bps).c_str(), mi.link_modes.hr().c_str());
+    }
+}
+
+void testc(string file, string file_content,
+    string xdriver, string xextras, string xbus, string xbps, string xlm)
+{
+    MeterInfo mi;
+    Configuration c;
+
+    vector<char> meter_conf(file_content.begin(), file_content.end());
+    meter_conf.push_back('\n');
+
+    parseMeterConfig(&c, meter_conf, file);
+
+    mi = c.meters.back();
+    if (toString(mi.driver) != xdriver,
+        mi.extras != xextras ||
+        mi.bus != xbus ||
+        to_string(mi.bps) != xbps ||
+        mi.link_modes.hr() != xlm)
+    {
+        printf("ERROR in meter parsing parts \"%s\" - got (driver: %s, extras: %s, bus: %s, bbps: %s, linkmodes: %s)\n", file.c_str(), toString(mi.driver).c_str(), mi.extras.c_str(), mi.bus.c_str(), to_string(mi.bps).c_str(), mi.link_modes.hr().c_str());
     }
 }
 
 void test_meters()
 {
+    string config_content;
+
     testm("piigth:BUS1:2400", true,
           "piigth", // driver
           "", // extras
           "BUS1", // bus
           "2400", // bps
           "mbus"); // linkmodes
+
+    config_content =
+        "name=test\n"
+        "driver=piigth:BUS1:2400\n"
+        "id=01234567\n";
+    testc("meter/piigth:BUS1:2400", config_content,
+          "piigth", // driver
+          "", // extras
+          "BUS1", // bus
+          "2400", // bps
+          "mbus"); // linkmodes)
+
 
     testm("multical21:c1", true,
           "multical21", // driver
@@ -802,4 +846,161 @@ void test_meters()
           "0", // bps
           "c1"); // linkmodes
 
+    config_content =
+        "name=test\n"
+        "driver=multical21:c1\n"
+        "id=01234567\n";
+    testc("meter/multical21:c1", config_content,
+          "multical21", // driver
+          "", // extras
+          "", // bus
+          "0", // bps
+          "c1"); // linkmodes)
+
+
+    testm("apator162(offset=162)", true,
+          "apator162", // driver
+          "offset=162", // extras
+          "", // bus
+          "0", // bps
+          "c1,t1"); // linkmodes
+
+    config_content =
+        "name=test\n"
+        "driver=apator162(offset=162)\n"
+        "id=01234567\n"
+        "key=00000000000000000000000000000000\n";
+    testc("meter/apator162(offset=162)", config_content,
+          "apator162", // driver
+          "offset=162", // extras
+          "", // bus
+          "0", // bps
+          "c1,t1"); // linkmodes)
+
+}
+
+void tests(string arg, bool expect, ContentStartsWith sw, string bus, string content)
+{
+    SendBusContent sbc;
+    bool rc = sbc.parse(arg);
+    if (rc != expect && rc == false)
+    {
+        printf("ERROR could not parse send bus content \"%s\"\n", arg.c_str());
+        return;
+    }
+    if (rc != expect && rc == true)
+    {
+        printf("ERROR could parse send bus content \"%s\" but expected failure!\n", arg.c_str());
+        return;
+    }
+
+    if (expect == false && rc == false) return; // It failed, which was expected.
+
+    if (sbc.starts_with != sw ||
+        sbc.bus != bus ||
+        sbc.content != content)
+    {
+        printf("ERROR in parsing send bus content \"%s\"\n"
+               "got      (sw: %s bus: %s, data: %s)\n"
+               "expected (sw: %s bus: %s, data: %s)\n", arg.c_str(),
+               toString(sbc.starts_with), sbc.bus.c_str(), sbc.content.c_str(),
+               toString(sw), bus.c_str(), content.c_str());
+    }
+}
+
+void test_sbc()
+{
+    tests("sendc:BUS1:11223344", true,
+          ContentStartsWith::C_FIELD,
+          "BUS1", // bus
+          "11223344"); // content
+
+    tests("sendci:alfa:11", true,
+          ContentStartsWith::CI_FIELD,
+          "alfa", // bus
+          "11"); // content
+
+    tests("alfa:t1", false, ContentStartsWith::C_FIELD, "", "");
+    tests("send", false, ContentStartsWith::C_FIELD, "", "");
+    tests("sendc:out", false, ContentStartsWith::C_FIELD, "", "");
+    tests("sendc:out:", false, ContentStartsWith::C_FIELD, "", "x");
+
+    tests("sends:out:5b00", true,
+          ContentStartsWith::SHORT_FRAME,
+          "out", // bus
+          "5b00"); // content
+
+    tests("sendl:mbus2:1122334455", true,
+          ContentStartsWith::LONG_FRAME,
+          "mbus2", // bus
+          "1122334455"); // content
+}
+
+void test_aes()
+{
+    vector<uchar> key;
+
+    hex2bin("0123456789abcdef0123456789abcdef", &key);
+    string poe =
+        "Once upon a midnight dreary, while I pondered, weak and weary,\n"
+        "Over many a quaint and curious volume of forgotten lore\n";
+
+    while (poe.length() % 16 != 0)
+    {
+        poe += ".";
+    }
+
+    uchar iv[16];
+    memset(iv, 0xaa, 16);
+
+    uchar in[poe.length()];
+    memcpy(in, &poe[0], poe.size());
+
+    debug("(aes) input: \"%s\"\n", poe.c_str());
+
+    uchar out[sizeof(in)];
+    AES_CBC_encrypt_buffer(out, in, sizeof(in), &key[0], iv);
+
+    vector<uchar> outv(out, out+sizeof(out));
+    string s = bin2hex(outv);
+    debug("(aes) encrypted: \"%s\"\n", s.c_str());
+
+    uchar back[sizeof(in)];
+    AES_CBC_decrypt_buffer(back, out, sizeof(in), &key[0], iv);
+
+    string b = string(back, back+sizeof(back));
+    debug("(aes) decrypted: \"%s\"\n", b.c_str());
+
+    if (poe != b)
+    {
+        printf("ERROR! aes with IV encrypt decrypt failed!\n");
+    }
+
+    AES_ECB_encrypt(in, &key[0], out, sizeof(in));
+    AES_ECB_decrypt(out, &key[0], back, sizeof(in));
+
+    if (memcmp(back, in, sizeof(in)))
+    {
+        printf("ERROR! aes encrypt decrypt (no iv) failed!\n");
+    }
+}
+
+void test_is_hex(const char *hex, bool expected_ok, bool expected_invalid)
+{
+    bool got_invalid;
+    bool got_ok = isHexString(hex, &got_invalid);
+
+    if (got_ok != expected_ok || got_invalid != expected_invalid)
+    {
+        printf("ERROR! hex string %s was expected to be %d (invalid %d) but got %d (invalid %d)\n",
+               hex,
+               expected_ok, expected_invalid, got_ok, got_invalid);
+    }
+}
+void test_hex()
+{
+    test_is_hex("00112233445566778899aabbccddeeff", true, false);
+    test_is_hex("00112233445566778899AABBCCDDEEFF", true, false);
+    test_is_hex("00112233445566778899AABBCCDDEEF", true, true);
+    test_is_hex("00112233445566778899AABBCCDDEEFG", false, false);
 }

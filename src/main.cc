@@ -50,6 +50,7 @@ SpecifiedDevice *find_specified_device_from_detected(Configuration *c, Detected 
 void list_fields(Configuration *config, string meter_type);
 void list_shell_envs(Configuration *config, string meter_type);
 void list_meters(Configuration *config);
+void list_units();
 void log_start_information(Configuration *config);
 void oneshot_check(Configuration *config, Telegram *t, Meter *meter);
 void regular_checkup(Configuration *config);
@@ -132,6 +133,12 @@ provided you with this binary. Read the full license for all details.
         exit(0);
     }
 
+    if (config->list_units)
+    {
+        list_units();
+        exit(0);
+    }
+
     if (config->need_help)
     {
         printf("wmbusmeters version: " VERSION "\n");
@@ -187,7 +194,7 @@ void list_shell_envs(Configuration *config, string meter_driver)
                       &ignore2, config->separator,
                       &ignore3,
                       &envs,
-                      &config->jsons,
+                      &config->extra_constant_fields,
                       &config->selected_fields);
 
     for (auto &e : envs)
@@ -204,7 +211,7 @@ void list_fields(Configuration *config, string meter_driver)
     mi.driver = toMeterDriver(meter_driver);
     shared_ptr<Meter> meter = createMeter(&mi);
 
-    int width = 0;
+    int width = 13; // Width of timestamp_utc
     for (auto &p : meter->prints())
     {
         if ((int)p.field_name.size() > width) width = p.field_name.size();
@@ -219,7 +226,13 @@ void list_fields(Configuration *config, string meter_driver)
     string meterr = padLeft("meter", width);
     printf("%s  Meter driver.\n", meterr.c_str());
     string timestamp = padLeft("timestamp", width);
-    printf("%s  Timestamp when wmbusmeters received the telegram.\n", timestamp.c_str());
+    printf("%s  Timestamp when wmbusmeters received the telegram. Local time for hr/fields UTC for json.\n", timestamp.c_str());
+    string timestamp_ut = padLeft("timestamp_ut", width);
+    printf("%s  Unix timestamp when wmbusmeters received the telegram.\n", timestamp_ut.c_str());
+    string timestamp_lt = padLeft("timestamp_lt", width);
+    printf("%s  Local time when wmbusmeters received the telegram.\n", timestamp_lt.c_str());
+    string timestamp_utc = padLeft("timestamp_utc", width);
+    printf("%s  UTC time when wmbusmeters received the telegram.\n", timestamp_utc.c_str());
     string device = padLeft("device", width);
     printf("%s  The wmbus device that received the telegram.\n", device.c_str());
     string rssi = padLeft("rssi_dbm", width);
@@ -241,6 +254,50 @@ void list_meters(Configuration *config)
             printf("%-14s %s\n", #mname, #info);
 LIST_OF_METERS
 #undef X
+}
+
+struct TmpUnit
+{
+    string suff, expl, name, quantity;
+};
+void list_units()
+{
+    vector<TmpUnit> units;
+    set<string> quantities;
+
+// X(KVARH,kvarh,"kVARh",Reactive_Energy,"kilo volt amperes reactive hour")
+    int width = 1;
+    int total = 1;
+    int tmp = 0;
+#define X(upn,lcn,name,quantity,expl) \
+    tmp = strlen(#lcn); if (tmp > width) { width = tmp; } \
+    tmp = strlen(#lcn)+strlen(name)+strlen(expl)+3; if (tmp > total) { total = tmp; } \
+    units.push_back( { #lcn, expl, name, #quantity } ); \
+    quantities.insert(#quantity);
+LIST_OF_UNITS
+#undef X
+
+    sort(units.begin(), units.end(), [](const TmpUnit & a, const TmpUnit & b) -> bool { return a.suff > b.suff; });
+    bool first = true;
+    for (const string &q : quantities)
+    {
+        if (!first)
+        {
+            printf("\n");
+        }
+        first = false;
+        printf("%s ", q.c_str());
+        size_t l = total-strlen(q.c_str());
+        for (size_t i=0; i<l; ++i) printf("─");
+        printf("\n\n");
+        for (TmpUnit &u : units)
+        {
+            if (u.quantity == q)
+            {
+                printf("%-*s %s (%s)\n", width, u.suff.c_str(), u.expl.c_str(), u.name.c_str());
+            }
+        }
+    }
 }
 
 void log_start_information(Configuration *config)
@@ -301,6 +358,7 @@ void regular_checkup(Configuration *config)
     }
 
     bus_manager_->regularCheckup();
+    bus_manager_->sendQueue();
 }
 
 void setup_log_file(Configuration *config)
@@ -401,7 +459,7 @@ bool start(Configuration *config)
     meter_manager_->whenMeterUpdated(
         [&](Telegram *t,Meter *meter)
         {
-            printer_->print(t, meter, &config->jsons, &config->selected_fields);
+            printer_->print(t, meter, &config->extra_constant_fields, &config->selected_fields);
             oneshot_check(config, t, meter);
         }
     );
@@ -440,25 +498,45 @@ bool start(Configuration *config)
         notice("(wmbusmeters) waiting for telegrams\n");
     }
 
+    bool stop_after_send = false;
     if (!meter_manager_->hasMeters() && serial_manager_->isRunning())
     {
-        notice("No meters configured. Printing id:s of all telegrams heard!\n");
+        if  (config->send_bus_content.size() != 0)
+        {
+            stop_after_send = true;
+        }
+        else
+        {
+            notice("No meters configured. Printing id:s of all telegrams heard!\n");
 
-        meter_manager_->onTelegram([](AboutTelegram &about, vector<uchar> frame) {
-                Telegram t;
-                t.about = about;
-                MeterKeys mk;
-                t.parse(frame, &mk, false); // Try a best effort parse, do not print any warnings.
-                t.print();
-                string info = string("(")+toString(about.type)+")";
-                t.explainParse(info.c_str(), 0);
-                logTelegram(t.original, t.frame, 0, 0);
-                return true;
-            });
+            meter_manager_->onTelegram([](AboutTelegram &about, vector<uchar> frame) {
+                    Telegram t;
+                    t.about = about;
+                    MeterKeys mk;
+                    t.parse(frame, &mk, false); // Try a best effort parse, do not print any warnings.
+                    t.print();
+                    string info = string("(")+toString(about.type)+")";
+                    t.explainParse(info.c_str(), 0);
+                    logTelegram(t.original, t.frame, 0, 0);
+                    return true;
+                });
+        }
     }
 
     bus_manager_->runAnySimulations();
 
+    // Queue any command line send bus contents.
+    for (SendBusContent &sbc : config->send_bus_content)
+    {
+        bus_manager_->queueSendBusContent(sbc);
+    }
+
+    // Flush the initial queue provided on the command line.
+    bus_manager_->sendQueue();
+    if (stop_after_send)
+    {
+        serial_manager_->stop();
+    }
     // This main thread now sleeps and waits for the serial communication manager to stop.
     // The manager has already started one thread that performs select and then callbacks
     // to decoding the telegrams, finally invoking the printer.

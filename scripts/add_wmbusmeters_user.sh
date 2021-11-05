@@ -1,6 +1,16 @@
 #!/bin/sh
 
-# Start wmbusmeters service
+ID=$(id -u wmbusmeters 2>/dev/null)
+
+if [ -f "$ROOT"/usr/sbin/nologin ]
+then
+    USERSHELL="$ROOT/usr/sbin/nologin"
+elif [ -f "$ROOT"/sbin/nologin ]
+then
+    USERSHELL="$ROOT/sbin/nologin"
+else
+    USERSHELL="/bin/false"
+fi
 
 if [ $(getent group wmbusmeters) ]
 then
@@ -8,18 +18,6 @@ then
 else
     groupadd -f wmbusmeters
     echo "group: added wmbusmeters"
-fi
-
-ID=$(id -u wmbusmeters 2>/dev/null)
-
-if [ -f /usr/sbin/nologin ]
-then
-    USERSHELL="/usr/sbin/nologin"
-elif [ -f /sbin/nologin ]
-then
-    USERSHELL="/sbin/nologin"
-else
-    USERSHELL="/bin/false"
 fi
 
 if [ -z "$ID" ]

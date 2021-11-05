@@ -780,6 +780,19 @@ void Telegram::addMoreExplanation(int pos, const char* fmt, ...)
     }
 }
 
+void Telegram::addSpecialExplanation(int offset, const char* fmt, ...)
+{
+    char buf[1024];
+    buf[1023] = 0;
+
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buf, 1023, fmt, args);
+    va_end(args);
+
+    explanations.push_back({offset, buf});
+}
+
 bool expectedMore(int line)
 {
     verbose("(wmbus) parser expected more data! (%d)\n", line);
@@ -986,7 +999,7 @@ bool Telegram::parseELL(vector<uchar>::iterator &pos)
                                       ell_pl_crc_b[0], ell_pl_crc_b[1],
                                       check  & 0xff, check >> 8, (ell_pl_crc==check?"OK":"ERROR"));
 
-        if (ell_pl_crc != check)
+        if (ell_pl_crc != check && !FUZZING)
         {
             // Ouch, checksum of the payload does not match.
             // A wrong key was probably used for decryption.
@@ -1395,7 +1408,7 @@ bool Telegram::potentiallyDecrypt(vector<uchar>::iterator &pos)
         // Now the frame from pos and onwards has been decrypted.
 
         CHECK(2);
-        if (*(pos+0) != 0x2f || *(pos+1) != 0x2f)
+        if ((*(pos+0) != 0x2f || *(pos+1) != 0x2f) && !FUZZING)
         {
             if (parser_warns_)
             {
@@ -1453,7 +1466,7 @@ bool Telegram::potentiallyDecrypt(vector<uchar>::iterator &pos)
 
         // Now the frame from pos and onwards has been decrypted.
         CHECK(2);
-        if (*(pos+0) != 0x2f || *(pos+1) != 0x2f)
+        if ((*(pos+0) != 0x2f || *(pos+1) != 0x2f) && !FUZZING)
         {
             if (parser_warns_)
             {
@@ -1476,12 +1489,18 @@ bool Telegram::potentiallyDecrypt(vector<uchar>::iterator &pos)
     }
     else if (tpl_sec_mode == TPLSecurityMode::SPECIFIC_16_31)
     {
+        debug("(wmbus) non-standard security mode 16_31\n");
         if (mustDecryptDiehlRealData(frame))
         {
+            debug("(diehl) must decode frame\n");
             if (!meter_keys) return false;
             bool ok = decryptDielhRealData(this, frame, pos, meter_keys->confidentiality_key);
+            // If this telegram is simulated, the content might already be decrypted and the
+            // decruption will fail. But we can assume all is well anyway!
+            if (!ok && isSimulated()) return true;
             if (!ok) return false;
             // Now the frame from pos and onwards has been decrypted.
+            debug("(diehl) decryption successful\n");
         }
     }
     return true;
@@ -1639,6 +1658,7 @@ void Telegram::preProcess()
     DiehlAddressTransformMethod diehl_method = mustTransformDiehlAddress(frame);
     if (diehl_method != DiehlAddressTransformMethod::NONE)
     {
+        debug("(diehl) preprocess necessary %s\n", toString(diehl_method));
         original = vector<uchar>(frame.begin(), frame.begin() + 10);
         transformDiehlAddress(frame, diehl_method);
     }
@@ -3510,13 +3530,13 @@ WMBusCommonImplementation::~WMBusCommonImplementation()
     debug("(wmbus) deleted %s\n", toString(type()));
 }
 
-WMBusCommonImplementation::WMBusCommonImplementation(string alias,
+WMBusCommonImplementation::WMBusCommonImplementation(string bus_alias,
                                                      WMBusDeviceType t,
                                                      shared_ptr<SerialCommunicationManager> manager,
                                                      shared_ptr<SerialDevice> serial,
                                                      bool is_serial)
     : manager_(manager),
-      alias_(alias),
+      bus_alias_(bus_alias),
       is_serial_(is_serial),
       is_working_(true),
       type_(t),
@@ -3560,9 +3580,9 @@ WMBusDeviceType WMBusCommonImplementation::type()
     return type_;
 }
 
-string WMBusCommonImplementation::alias()
+string WMBusCommonImplementation::busAlias()
 {
-    return alias_;
+    return bus_alias_;
 }
 
 void WMBusCommonImplementation::onTelegram(function<bool(AboutTelegram&,vector<uchar>)> cb)
@@ -3570,9 +3590,10 @@ void WMBusCommonImplementation::onTelegram(function<bool(AboutTelegram&,vector<u
     telegram_listeners_.push_back(cb);
 }
 
-void WMBusCommonImplementation::sendTelegram(Telegram *t)
+bool WMBusCommonImplementation::sendTelegram(ContentStartsWith starts_with, vector<uchar> &content)
 {
     warning("(bus) Trying to send telegram to bus that has not implemented sending!\n");
+    return false;
 }
 
 static bool ignore_duplicate_telegrams_ = false;
@@ -3672,9 +3693,9 @@ bool WMBusCommonImplementation::reset()
             usleep(3000*1000);
         }
 
-        AccessCheck rc = serial()->open(false);
+        bool ok = serial()->open(false);
 
-        if (rc != AccessCheck::AccessOK)
+        if (!ok)
         {
             // Ouch....
             return false;
@@ -3987,61 +4008,6 @@ LIST_OF_AFL_AUTH_TYPES
     return AFLAuthenticationType::Reserved1;
 }
 
-AccessCheck findAndDetect(shared_ptr<SerialCommunicationManager> manager,
-                          string *out_device,
-                          function<AccessCheck(string,shared_ptr<SerialCommunicationManager>)> check,
-                          string dongle_name,
-                          string device_root)
-{
-    string dev = device_root;
-    debug("(%s) exists? %s\n", dongle_name.c_str(), dev.c_str());
-    AccessCheck ac = checkIfExistsAndSameGroup(dev);
-    *out_device = dev;
-    if (ac == AccessCheck::AccessOK)
-    {
-        debug("(%s) checking %s\n", dongle_name.c_str(), dev.c_str());
-        AccessCheck rc = check(dev, manager);
-        if (rc == AccessCheck::AccessOK) return AccessCheck::AccessOK;
-    }
-
-    if (ac == AccessCheck::NotSameGroup)
-    {
-        // Device exists, but you do not belong to its group!
-        // This will short circuit testing for other devices.
-        // But not being in the same group is such a problematic
-        // situation, that we can stop early.
-        return AccessCheck::NotSameGroup;
-    }
-
-    *out_device = "";
-    // No device found!
-    return AccessCheck::NotThere;
-}
-
-AccessCheck checkAccessAndDetect(shared_ptr<SerialCommunicationManager> manager,
-                                 function<AccessCheck(string,shared_ptr<SerialCommunicationManager>)> check,
-                                 string dongle_name,
-                                 string device)
-{
-    debug("(%s) exists? %s\n", dongle_name.c_str(), device.c_str());
-    AccessCheck ac = checkIfExistsAndSameGroup(device);
-    if (ac == AccessCheck::AccessOK)
-    {
-        debug("(%s) checking %s\n", dongle_name.c_str(), device.c_str());
-        AccessCheck rc = check(device, manager);
-        if (rc == AccessCheck::AccessOK) return AccessCheck::AccessOK;
-        return AccessCheck::NotThere;
-    }
-    if (ac == AccessCheck::NotSameGroup)
-    {
-        // Device exists, but you do not belong to its group!
-        return AccessCheck::NotSameGroup;
-    }
-
-    // No device found!
-    return AccessCheck::NotThere;
-}
-
 bool trimCRCsFrameFormatA(std::vector<uchar> &payload)
 {
     if (payload.size() < 12) {
@@ -4056,7 +4022,7 @@ bool trimCRCsFrameFormatA(std::vector<uchar> &payload)
     uint16_t calc_crc = crc16_EN13757(&payload[0], 10);
     uint16_t check_crc = payload[10] << 8 | payload[11];
 
-    if (calc_crc != check_crc)
+    if (calc_crc != check_crc && !FUZZING)
     {
         debug("(wmbus) ff a dll crc first (calculated %04x) did not match (expected %04x) for bytes 0-%zu!\n", calc_crc, check_crc, 10);
         return false;
@@ -4070,7 +4036,7 @@ bool trimCRCsFrameFormatA(std::vector<uchar> &payload)
         size_t to = pos+16;
         calc_crc = crc16_EN13757(&payload[pos], 16);
         check_crc = payload[to] << 8 | payload[to+1];
-        if (calc_crc != check_crc)
+        if (calc_crc != check_crc && !FUZZING)
         {
             debug("(wmbus) ff a dll crc mid (calculated %04x) did not match (expected %04x) for bytes %zu-%zu!\n",
                   calc_crc, check_crc, pos, to-1);
@@ -4086,7 +4052,7 @@ bool trimCRCsFrameFormatA(std::vector<uchar> &payload)
         size_t blen = (tto-pos);
         calc_crc = crc16_EN13757(&payload[pos], blen);
         check_crc = payload[tto] << 8 | payload[tto+1];
-        if (calc_crc != check_crc)
+        if (calc_crc != check_crc && !FUZZING)
         {
             debug("(wmbus) ff a dll crc final (calculated %04x) did not match (expected %04x) for bytes %zu-%zu!\n",
                   calc_crc, check_crc, pos, tto-1);
@@ -4133,7 +4099,7 @@ bool trimCRCsFrameFormatB(std::vector<uchar> &payload)
     uint16_t calc_crc = crc16_EN13757(&payload[0], crc1_pos);
     uint16_t check_crc = payload[crc1_pos] << 8 | payload[crc1_pos+1];
 
-    if (calc_crc != check_crc)
+    if (calc_crc != check_crc && !FUZZING)
     {
         debug("(wmbus) ff b dll crc (calculated %04x) did not match (expected %04x) for bytes 0-%zu!\n", calc_crc, check_crc, crc1_pos);
         return false;
@@ -4147,7 +4113,7 @@ bool trimCRCsFrameFormatB(std::vector<uchar> &payload)
         calc_crc = crc16_EN13757(&payload[crc1_pos+2], crc2_pos);
         check_crc = payload[crc2_pos] << 8 | payload[crc2_pos+1];
 
-        if (calc_crc != check_crc)
+        if (calc_crc != check_crc && !FUZZING)
         {
             debug("(wmbus) ff b dll crc (calculated %04x) did not match (expected %04x) for bytes %zu-%zu!\n",
                   calc_crc, check_crc, crc1_pos+2, crc2_pos);
@@ -4179,7 +4145,7 @@ FrameStatus checkWMBusFrame(vector<uchar> &data,
     // Ugly: 00615B2A442D2C998734761B168D2021D0871921|58387802FF2071000413F81800004413F8180000615B
     // Here the frame is prefixed with some random data.
 
-    debugPayload("(wmbus) checkWMBUSFrame\n", data);
+    debugPayload("(wmbus) checkWMBUSFrame", data);
 
     if (data.size() < 11)
     {
@@ -4384,9 +4350,9 @@ bool is_command(string b, string *cmd)
     return true;
 }
 
-bool check_file(string f, bool *is_tty, bool *is_stdin, bool *is_file, bool *is_simulation)
+bool check_file(string f, bool *is_tty, bool *is_stdin, bool *is_file, bool *is_simulation, bool *is_hex_simulation)
 {
-    *is_tty = *is_stdin = *is_file = *is_simulation = false;
+    *is_tty = *is_stdin = *is_file = *is_simulation = *is_hex_simulation = false;
     if (f == "stdin")
     {
         *is_stdin = true;
@@ -4399,6 +4365,16 @@ bool check_file(string f, bool *is_tty, bool *is_stdin, bool *is_file, bool *is_
         // a file will confuse the user to no end....
         return false;
     }
+    // A hex string becomes a simulation file with a single line containing a telegram defined by the hex string.
+    bool invalid_hex = false;
+    if (isHexString(f.c_str(), &invalid_hex))
+    {
+        *is_simulation = true;
+        *is_hex_simulation = true;
+        assert(!invalid_hex);
+        return true;
+    }
+    // A command line arguments simulation_xxyyzz.txt is detected as a simulation file.
     if (checkIfSimulationFile(f.c_str()))
     {
         *is_simulation = true;
@@ -4429,9 +4405,17 @@ bool is_type_id_extras(string t, WMBusDeviceType *out_type, string *out_id, stri
     // im871a im871a[12345678] im871a(foo=123)
     // auto
     // rtlwmbus rtlwmbus[plast123] rtlwmbus(device extras) rtlwmbus[hej](extras)
+    // hex
     if (t == "auto")
     {
         *out_type = WMBusDeviceType::DEVICE_AUTO;
+        *out_id = "";
+        return true;
+    }
+
+    if (t == "hex")
+    {
+        *out_type = WMBusDeviceType::DEVICE_HEXTTY;
         *out_id = "";
         return true;
     }
@@ -4513,7 +4497,12 @@ void SpecifiedDevice::clear()
 string SpecifiedDevice::str()
 {
     string r;
+    if (bus_alias != "")
+    {
+        r += bus_alias+"=";
+    }
     if (file != "") r += file+":";
+    if (hex != "") r += "<"+hex+">:";
     if (type != WMBusDeviceType::DEVICE_UNKNOWN)
     {
         r += toString(type);
@@ -4541,6 +4530,8 @@ string SpecifiedDevice::str()
 
 bool SpecifiedDevice::isLikelyDevice(string &arg)
 {
+    // Check that it is not a send bus content command.
+    if (SendBusContent::isLikely(arg)) return false;
     // Only devices are allowed to contain colons.
     // Devices usually contain a colon!
     if (arg.find(":") != string::npos) return true;
@@ -4554,16 +4545,16 @@ bool SpecifiedDevice::parse(string &arg)
     size_t ep = arg.find("=");
     if (ep != string::npos)
     {
-        // Is there an alias first?
+        // Is there an bus alias first?
         // BUS1=/dev/ttyUSB0
-        alias = arg.substr(0, ep);
-        if (isValidAlias(alias))
+        bus_alias = arg.substr(0, ep);
+        if (isValidAlias(bus_alias))
         {
             arg = arg.substr(ep+1);
         }
         else
         {
-            alias = "";
+            bus_alias = "";
         }
     }
 
@@ -4590,10 +4581,17 @@ bool SpecifiedDevice::parse(string &arg)
             // then the specified device string is faulty.
             return false;
         }
-        if (!file_checked && check_file(p, &is_tty, &is_stdin, &is_file, &is_simulation))
+        if (!file_checked && check_file(p, &is_tty, &is_stdin, &is_file, &is_simulation, &is_hex_simulation))
         {
             file_checked = true;
-            file = p;
+            if (!is_hex_simulation)
+            {
+                file = p;
+            }
+            else
+            {
+                hex = p;
+            }
         }
         else if (!typeidextras_checked && is_type_id_extras(p, &type, &id, &extras))
         {
@@ -4647,6 +4645,46 @@ bool SpecifiedDevice::parse(string &arg)
     return true;
 }
 
+const char *toString(ContentStartsWith sw)
+{
+    if (sw == ContentStartsWith::C_FIELD) return "c_field";
+    if (sw == ContentStartsWith::CI_FIELD) return "ci_field";
+    if (sw == ContentStartsWith::SHORT_FRAME) return "short_frame";
+    if (sw == ContentStartsWith::LONG_FRAME) return "long_frame";
+    return "?";
+}
+
+bool SendBusContent::isLikely(const string &s)
+{
+    return s.rfind("sendci:", 0) == 0 || s.rfind("sendc:", 0) == 0 ||
+        s.rfind("sends:", 0) == 0 || s.rfind("sendl:", 0) == 0;
+}
+
+bool SendBusContent::parse(const string &s)
+{
+    bus = "";
+    content = "";
+    // Example: send:OUT17:0102030405fefcfbfd
+    // Where OUT17 is a valid bus.
+    size_t c1 = s.find(":");
+    if (c1 == string::npos) return false;
+    size_t c2 = s.find(":", c1+1);
+    if (c2 == string::npos) return false;
+    string cmd = s.substr(0, c1);
+    if (cmd != "sendci" && cmd != "sendc" &&
+        cmd != "sends" && cmd != "sendl") return false;
+    if (cmd == "sendci") starts_with = ContentStartsWith::CI_FIELD;
+    if (cmd == "sendc") starts_with = ContentStartsWith::C_FIELD;
+    if (cmd == "sends") starts_with = ContentStartsWith::SHORT_FRAME;
+    if (cmd == "sendl") starts_with = ContentStartsWith::LONG_FRAME;
+    bus = s.substr(c1+1, c2-c1-1);
+    if (bus.size() == 0) return false;
+    content = s.substr(c2+1);
+    if (content.size() == 0) return false;
+    if (content.size() % 2 == 1) return false;
+    return true;
+}
+
 Detected detectWMBusDeviceOnTTY(string tty,
                                 LinkModeSet desired_linkmodes,
                                 shared_ptr<SerialCommunicationManager> handler)
@@ -4656,6 +4694,14 @@ Detected detectWMBusDeviceOnTTY(string tty,
     detected.found_file = tty;
     detected.specified_device.is_tty = true;
     detected.specified_device.linkmodes = desired_linkmodes;
+
+    AccessCheck ac = handler->checkAccess(tty, handler);
+    if (ac != AccessCheck::AccessOK)
+    {
+        // Oups, some low level problem (permissions/groups etc) that means that we will not
+        // be able to talk to the device. Lets stop here.
+        return detected;
+    }
 
     // If im87a is tested first, a delay of 1s must be inserted
     // before amb8465 is tested, lest it will not respond properly.
@@ -4696,16 +4742,17 @@ Detected detectWMBusDeviceOnTTY(string tty,
     return detected;
 }
 
-Detected detectWMBusDeviceWithFile(SpecifiedDevice &specified_device,
-                                   LinkModeSet default_linkmodes,
-                                   shared_ptr<SerialCommunicationManager> handler)
+Detected detectWMBusDeviceWithFileOrHex(SpecifiedDevice &specified_device,
+                                        LinkModeSet default_linkmodes,
+                                        shared_ptr<SerialCommunicationManager> handler)
 {
-    assert(specified_device.file != "");
+    assert(specified_device.file != "" || specified_device.hex != "");
     assert(specified_device.command == "");
-    debug("(lookup) with file \"%s\"\n", specified_device.file.c_str());
+    debug("(lookup) with file/hex \"%s%s\"\n", specified_device.file.c_str(), specified_device.hex.c_str());
 
     Detected detected;
     detected.found_file = specified_device.file;
+    detected.found_hex = specified_device.hex;
     detected.setSpecifiedDevice(specified_device);
     // If <device>:c1 is missing :c1 then use --c1.
     LinkModeSet lms = specified_device.linkmodes;
@@ -4715,8 +4762,8 @@ Detected detectWMBusDeviceWithFile(SpecifiedDevice &specified_device,
     }
     if (specified_device.is_simulation)
     {
-        debug("(lookup) driver: simulation file\n");
-        // A simulation file has a lms of all by default, eg no simulation_foo.txt:t1 nor --t1
+        debug("(lookup) driver: simulation %s\n", specified_device.hex != "" ? "hex" : "file");
+        // A simulation file/hex has a lms of all by default, eg no simulation_foo.txt:t1 nor --t1
         if (specified_device.linkmodes.empty()) lms.setAll();
         detected.setAsFound("", DEVICE_SIMULATION, 0 , false, lms);
         return detected;
@@ -4780,6 +4827,10 @@ Detected detectWMBusDeviceWithFile(SpecifiedDevice &specified_device,
         d.found_file = specified_device.file;
         d.found_type = WMBusDeviceType::DEVICE_UNKNOWN;
     }
+    else
+    {
+        d.specified_device = specified_device;
+    }
     return d;
 }
 
@@ -4803,23 +4854,23 @@ Detected detectWMBusDeviceWithCommand(SpecifiedDevice &specified_device,
 
 AccessCheck detectUNKNOWN(Detected *detected, shared_ptr<SerialCommunicationManager> handler)
 {
-    return AccessCheck::NotThere;
+    return AccessCheck::NoSuchDevice;
 }
 
 AccessCheck detectSKIP(Detected *detected, shared_ptr<SerialCommunicationManager> handler)
 {
-    return AccessCheck::NotThere;
+    return AccessCheck::NoSuchDevice;
 }
 
 AccessCheck detectSIMULATION(Detected *detected, shared_ptr<SerialCommunicationManager> handler)
 {
-    return AccessCheck::NotThere;
+    return AccessCheck::NoSuchDevice;
 }
 
 AccessCheck detectAUTO(Detected *detected, shared_ptr<SerialCommunicationManager> handler)
 {
     // Detection of auto is currently not implemented here, but elsewhere.
-    return AccessCheck::NotThere;
+    return AccessCheck::NoSuchDevice;
 }
 
 AccessCheck reDetectDevice(Detected *detected, shared_ptr<SerialCommunicationManager> handler)
@@ -4831,7 +4882,7 @@ LIST_OF_MBUS_DEVICES
 #undef X
 
     assert(0);
-    return AccessCheck::NotThere;
+    return AccessCheck::NoSuchDevice;
 }
 
 bool usesRTLSDR(WMBusDeviceType t)

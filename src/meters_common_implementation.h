@@ -41,6 +41,7 @@ struct MeterCommonImplementation : public virtual Meter
 
     string datetimeOfUpdateHumanReadable();
     string datetimeOfUpdateRobot();
+    string unixTimestampOfUpdate();
 
     void onUpdate(function<void(Telegram*,Meter*)> cb);
     int numUpdates();
@@ -65,9 +66,9 @@ protected:
     void setExpectedTPLSecurityMode(TPLSecurityMode tsm);
     void addConversions(std::vector<Unit> cs);
     void addShell(std::string cmdline);
-    void addJson(std::string json);
+    void addExtraConstantField(std::string ecf);
     std::vector<std::string> &shellCmdlines();
-    std::vector<std::string> &additionalJsons();
+    std::vector<std::string> &meterExtraConstantFields();
     void addLinkMode(LinkMode lm);
     // Print with the default unit for this quantity.
     void addPrint(string vname, Quantity vquantity,
@@ -88,7 +89,11 @@ protected:
                     string *json,
                     vector<string> *envs,
                     vector<string> *more_json, // Add this json "key"="value" strings.
-                    vector<string> *selected_fields); // Only print these fields. Json always everything.
+                    vector<string> *selected_fields); // Only print these fields.
+    // Json fields cannot be modified expect by adding conversions.
+    // Json fields include all values except timestamp_ut, timestamp_utc, timestamp_lt
+    // since Json is assumed to be decoded by a program and the current timestamp which is the
+    // same as timestamp_utc, can always be decoded/recoded into local time or a unix timestamp.
 
     virtual void processContent(Telegram *t) = 0;
 
@@ -108,7 +113,7 @@ private:
     time_t datetime_of_update_ {};
     LinkModeSet link_modes_ {};
     vector<string> shell_cmdlines_;
-    vector<string> jsons_;
+    vector<string> extra_constant_fields_;
 
 protected:
     std::map<std::string,std::pair<int,std::string>> values_;

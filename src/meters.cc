@@ -276,8 +276,8 @@ MeterCommonImplementation::MeterCommonImplementation(MeterInfo &mi,
     for (auto s : mi.shells) {
         addShell(s);
     }
-    for (auto j : mi.jsons) {
-        addJson(j);
+    for (auto j : mi.extra_constant_fields) {
+        addExtraConstantField(j);
     }
 }
 
@@ -294,9 +294,9 @@ void MeterCommonImplementation::addShell(string cmdline)
     shell_cmdlines_.push_back(cmdline);
 }
 
-void MeterCommonImplementation::addJson(string json)
+void MeterCommonImplementation::addExtraConstantField(string ecf)
 {
-    jsons_.push_back(json);
+    extra_constant_fields_.push_back(ecf);
 }
 
 vector<string> &MeterCommonImplementation::shellCmdlines()
@@ -304,9 +304,9 @@ vector<string> &MeterCommonImplementation::shellCmdlines()
     return shell_cmdlines_;
 }
 
-vector<string> &MeterCommonImplementation::additionalJsons()
+vector<string> &MeterCommonImplementation::meterExtraConstantFields()
 {
-    return jsons_;
+    return extra_constant_fields_;
 }
 
 MeterDriver MeterCommonImplementation::driver()
@@ -398,6 +398,14 @@ string MeterCommonImplementation::datetimeOfUpdateRobot()
     // This is the date time in the Greenwich timezone (Zulu time), dont get surprised!
     strftime(datetime, sizeof(datetime), "%FT%TZ", gmtime(&datetime_of_update_));
     return string(datetime);
+}
+
+string MeterCommonImplementation::unixTimestampOfUpdate()
+{
+    char ut[40];
+    memset(ut, 0, sizeof(ut));
+    snprintf(ut, sizeof(ut)-1, "%lu", datetime_of_update_);
+    return string(ut);
 }
 
 bool needsPolling(MeterDriver d)
@@ -505,7 +513,7 @@ bool MeterCommonImplementation::isTelegramForMeter(Telegram *t, Meter *meter, Me
         {
             string possible_drivers = t->autoDetectPossibleDrivers();
             warning("(meter) %s: meter detection did not match the selected driver %s! correct driver is: %s\n"
-                    "(meter) Not printing this warning agin for id: %02x%02x%02x%02x mfct: (%s) %s (0x%02x) type: %s (0x%02x) ver: 0x%02x\n",
+                    "(meter) Not printing this warning again for id: %02x%02x%02x%02x mfct: (%s) %s (0x%02x) type: %s (0x%02x) ver: 0x%02x\n",
                     name.c_str(),
                     toString(driver).c_str(),
                     possible_drivers.c_str(),
@@ -576,7 +584,8 @@ void MeterCommonImplementation::triggerUpdate(Telegram *t)
     t->handled = true;
 }
 
-string concatAllFields(Meter *m, Telegram *t, char c, vector<Print> &prints, vector<Unit> &cs, bool hr)
+string concatAllFields(Meter *m, Telegram *t, char c, vector<Print> &prints, vector<Unit> &cs, bool hr,
+                       vector<string> *extra_constant_fields)
 {
     string s;
     s = "";
@@ -615,87 +624,155 @@ string concatAllFields(Meter *m, Telegram *t, char c, vector<Print> &prints, vec
     return s;
 }
 
-string concatFields(Meter *m, Telegram *t, char c, vector<Print> &prints, vector<Unit> &cs, bool hr,
-                    vector<string> *selected_fields)
+string findField(string key, vector<string> *extra_constant_fields)
 {
-    if (selected_fields == NULL || selected_fields->size() == 0)
+    key = key+"=";
+    for (string ecf : *extra_constant_fields)
     {
-        return concatAllFields(m, t, c, prints, cs, hr);
+        if (startsWith(ecf, key))
+        {
+            return ecf.substr(key.length());
+        }
     }
-    string s;
-    s = "";
+    return "";
+}
 
-    for (string field : *selected_fields)
+// Is the desired field one of the fields common to all meters and telegrams?
+bool checkCommonField(string *buf, string field, Meter *m, Telegram *t, char c)
+{
+    if (field == "name")
     {
-        if (field == "name")
-        {
-            s += m->name() + c;
-            continue;
-        }
-        if (field == "id")
-        {
-            s += t->ids.back() + c;
-            continue;
-        }
-        if (field == "timestamp")
-        {
-            s += m->datetimeOfUpdateHumanReadable() + c;
-            continue;
-        }
-        if (field == "device")
-        {
-            s += t->about.device + c;
-            continue;
-        }
-        if (field == "rssi_dbm")
-        {
-            s += to_string(t->about.rssi_dbm) + c;
-            continue;
-        }
+        *buf += m->name() + c;
+        return true;
+    }
+    if (field == "id")
+    {
+        *buf += t->ids.back() + c;
+        return true;
+    }
+    if (field == "timestamp")
+    {
+        *buf += m->datetimeOfUpdateHumanReadable() + c;
+        return true;
+    }
+    if (field == "timestamp_lt")
+    {
+        *buf += m->datetimeOfUpdateHumanReadable() + c;
+        return true;
+    }
+    if (field == "timestamp_utc")
+    {
+        *buf += m->datetimeOfUpdateRobot() + c;
+        return true;
+    }
+    if (field == "timestamp_ut")
+    {
+        *buf += m->unixTimestampOfUpdate() + c;
+        return true;
+    }
+    if (field == "device")
+    {
+        *buf += t->about.device + c;
+        return true;
+    }
+    if (field == "rssi_dbm")
+    {
+        *buf += to_string(t->about.rssi_dbm) + c;
+        return true;
+    }
 
-        bool handled = false;
-        for (Print p : prints)
+    return false;
+}
+
+// Is the desired field one of the meter printable fields?
+bool checkPrintableField(string *buf, string field, Meter *m, Telegram *t, char c,
+                         vector<Print> &prints, vector<Unit> &cs)
+{
+    for (Print p : prints)
+    {
+        if (p.getValueString)
         {
-            if (p.getValueString)
+            // Strings are simply just print them.
+            if (field == p.vname)
             {
-                if (field == p.vname)
-                {
-                    s += p.getValueString() + c;
-                    handled = true;
-                }
+                *buf += p.getValueString() + c;
+                return true;
             }
-            else if (p.getValueDouble)
+        }
+        else if (p.getValueDouble)
+        {
+            // Doubles have to be converted into the proper unit.
+            string default_unit = unitToStringLowerCase(p.default_unit);
+            string var = p.vname+"_"+default_unit;
+            if (field == var)
             {
-                string default_unit = unitToStringLowerCase(p.default_unit);
-                string var = p.vname+"_"+default_unit;
-                if (field == var)
+                // Default unit.
+                *buf += valueToString(p.getValueDouble(p.default_unit), p.default_unit) + c;
+                return true;
+            }
+            else
+            {
+                // Added conversion unit.
+                Unit u = replaceWithConversionUnit(p.default_unit, cs);
+                if (u != p.default_unit)
                 {
-                    s += valueToString(p.getValueDouble(p.default_unit), p.default_unit) + c;
-                    handled = true;
-                }
-                else
-                {
-                    Unit u = replaceWithConversionUnit(p.default_unit, cs);
-                    if (u != p.default_unit)
+                    string unit = unitToStringLowerCase(u);
+                    string var = p.vname+"_"+unit;
+                    if (field == var)
                     {
-                        string unit = unitToStringLowerCase(u);
-                        string var = p.vname+"_"+unit;
-                        if (field == var)
-                        {
-                            s += valueToString(p.getValueDouble(u), u) + c;
-                            handled = true;
-                        }
+                        *buf += valueToString(p.getValueDouble(u), u) + c;
+                        return true;
                     }
                 }
             }
         }
+    }
+
+    return false;
+}
+
+// Is the desired field one of the constant fields?
+bool checkConstantField(string *buf, string field, char c, vector<string> *extra_constant_fields)
+{
+    // Ok, lets look for extra constant fields and print any such static information.
+    string v = findField(field, extra_constant_fields);
+    if (v != "")
+    {
+        *buf += v + c;
+        return true;
+    }
+
+    return false;
+}
+
+
+string concatFields(Meter *m, Telegram *t, char c, vector<Print> &prints, vector<Unit> &cs, bool hr,
+                    vector<string> *selected_fields, vector<string> *extra_constant_fields)
+{
+    if (selected_fields == NULL || selected_fields->size() == 0)
+    {
+        return concatAllFields(m, t, c, prints, cs, hr, extra_constant_fields);
+    }
+    string buf = "";
+
+    for (string field : *selected_fields)
+    {
+        bool handled = checkCommonField(&buf, field, m, t, c);
+        if (handled) continue;
+
+        handled = checkPrintableField(&buf, field, m, t, c, prints, cs);
+        if (handled) continue;
+
+        handled = checkConstantField(&buf, field, c, extra_constant_fields);
+        if (handled) continue;
+
         if (!handled)
         {
-            s += "?"+field+"?"+c;
+            buf += "?"+field+"?"+c;
         }
     }
-    if (s.back() == c) s.pop_back();
-    return s;
+    if (buf.back() == c) buf.pop_back();
+    return buf;
 }
 
 bool MeterCommonImplementation::handleTelegram(AboutTelegram &about, vector<uchar> input_frame, bool simulated, string *ids, bool *id_match)
@@ -753,11 +830,11 @@ void MeterCommonImplementation::printMeter(Telegram *t,
                                            string *fields, char separator,
                                            string *json,
                                            vector<string> *envs,
-                                           vector<string> *more_json,
+                                           vector<string> *extra_constant_fields,
                                            vector<string> *selected_fields)
 {
-    *human_readable = concatFields(this, t, '\t', prints_, conversions_, true, selected_fields);
-    *fields = concatFields(this, t, separator, prints_, conversions_, false, selected_fields);
+    *human_readable = concatFields(this, t, '\t', prints_, conversions_, true, selected_fields, extra_constant_fields);
+    *fields = concatFields(this, t, separator, prints_, conversions_, false, selected_fields, extra_constant_fields);
 
     string media;
     if (t->tpl_id_found)
@@ -808,21 +885,22 @@ void MeterCommonImplementation::printMeter(Telegram *t,
         }
     }
     s += "\"timestamp\":\""+datetimeOfUpdateRobot()+"\"";
+
     if (t->about.device != "")
     {
         s += ",";
         s += "\"device\":\""+t->about.device+"\",";
         s += "\"rssi_dbm\":"+to_string(t->about.rssi_dbm);
     }
-    for (string add_json : additionalJsons())
+    for (string extra_field : meterExtraConstantFields())
     {
         s += ",";
-        s += makeQuotedJson(add_json);
+        s += makeQuotedJson(extra_field);
     }
-    for (string add_json : *more_json)
+    for (string extra_field : *extra_constant_fields)
     {
         s += ",";
-        s += makeQuotedJson(add_json);
+        s += makeQuotedJson(extra_field);
     }
     s += "}";
     *json = s;
@@ -840,6 +918,9 @@ void MeterCommonImplementation::printMeter(Telegram *t,
     envs->push_back(string("METER_MEDIA=")+media);
     envs->push_back(string("METER_TYPE=")+meterDriver());
     envs->push_back(string("METER_TIMESTAMP=")+datetimeOfUpdateRobot());
+    envs->push_back(string("METER_TIMESTAMP_UTC=")+datetimeOfUpdateRobot());
+    envs->push_back(string("METER_TIMESTAMP_UT=")+unixTimestampOfUpdate());
+    envs->push_back(string("METER_TIMESTAMP_LT=")+datetimeOfUpdateHumanReadable());
     if (t->about.device != "")
     {
         envs->push_back(string("METER_DEVICE=")+t->about.device);
@@ -874,13 +955,13 @@ void MeterCommonImplementation::printMeter(Telegram *t,
 
     // If the configuration has supplied json_address=Roodroad 123
     // then the env variable METER_address will available and have the content "Roodroad 123"
-    for (string add_json : additionalJsons())
+    for (string add_json : meterExtraConstantFields())
     {
         envs->push_back(string("METER_")+add_json);
     }
-    for (string add_json : *more_json)
+    for (string extra_field : *extra_constant_fields)
     {
-        envs->push_back(string("METER_")+add_json);
+        envs->push_back(string("METER_")+extra_field);
     }
 }
 
@@ -901,6 +982,24 @@ string WaterMeter::timeDry() { return "-NAN"; }
 string WaterMeter::timeReversed() { return "-NAN"; }
 string WaterMeter::timeLeaking() { return "-NAN"; }
 string WaterMeter::timeBursting() { return "-NAN"; }
+
+double GasMeter::totalGasConsumption(Unit u) { return -NAN; }
+bool  GasMeter::hasTotalGasConsumption() { return false; }
+double GasMeter::targetGasConsumption(Unit u) { return -NAN; }
+bool  GasMeter::hasTargetGasConsumption() { return false; }
+double GasMeter::maxFlow(Unit u) { return -NAN; }
+bool  GasMeter::hasMaxFlow() { return false; }
+double GasMeter::flowTemperature(Unit u) { return -NAN; }
+bool GasMeter::hasFlowTemperature() { return false; }
+double GasMeter::externalTemperature(Unit u) { return -NAN; }
+bool GasMeter::hasExternalTemperature() { return false; }
+
+string GasMeter::statusHumanReadable() { return "-NAN"; }
+string GasMeter::status() { return "-NAN"; }
+string GasMeter::timeDry() { return "-NAN"; }
+string GasMeter::timeReversed() { return "-NAN"; }
+string GasMeter::timeLeaking() { return "-NAN"; }
+string GasMeter::timeBursting() { return "-NAN"; }
 
 double HeatMeter::totalEnergyConsumption(Unit u) { return -NAN; }
 double HeatMeter::currentPeriodEnergyConsumption(Unit u) { return -NAN; }

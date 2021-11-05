@@ -14,6 +14,7 @@ METERS="MyWarmWater supercom587 12345678 NOKEY
       MoreWater   iperl       12345699 NOKEY
       WaterWater  iperl       33225544 NOKEY
       MyElectricity1 amiplus  10101010 NOKEY
+      MyElectricity2 amiplus  00254358 NOKEY
       Duschen     mkradio3    34333231 NOKEY
       Duschagain  mkradio4    02410120 NOKEY
       HeatMeter   vario451    58234965 NOKEY
@@ -32,11 +33,16 @@ METERS="MyWarmWater supercom587 12345678 NOKEY
       IzarWater   izar        21242472 NOKEY
       IzarWater2  izar        66290778 NOKEY
       IzarWater3  izar        19790778 NOKEY
+      IzarWater4  izar        18001698 NOKEY
       HydrusWater hydrus      64646464 NOKEY
       HydrusVater hydrus      65656565 NOKEY
       HydrusAES   hydrus      64745666 NOKEY
+      HydrusIzarRSWarm auto   60904720 NOKEY
+      HydrusIzarRS auto       60897379 NOKEY
       HydrodigitWater hydrodigit 86868686 NOKEY
+      HydrodigitWater2 hydrodigit 67452301 NOKEY
       Q400Water   q400        72727272 AAA896100FED12DD614DD5D46369ACDD
+      AxiomaWater q400        72727273 NOKEY
       Elen1       ebzwmbe     22992299 NOKEY
       Elen2       esyswm      77997799 NOKEY
       Elen3       ehzp        55995599 NOKEY
@@ -52,7 +58,12 @@ METERS="MyWarmWater supercom587 12345678 NOKEY
       Sharky775   sharky      68926025 NOKEY
       Heating     compact5    62626262 NOKEY
       Hetta       elf         01885619 NOKEY
-      DigiWasser  dme_07      93929190 NOKEY"
+      DigiWasser  dme_07      93929190 NOKEY
+      Votten      aventieswm  61070071 A004EB23329A477F1DD2D7820B56EB3D
+      GasMeter    unismart    00043094 00000000000000000000000000000000
+      HeatCool    hydrocalm3  71727374 NOKEY
+      TempoHygro  munia       00013482 NOKEY
+      QHeato      qheat       67228058 NOKEY"
 
 
 cat simulations/simulation_t1.txt | grep '^{' > $TEST/test_expected.txt

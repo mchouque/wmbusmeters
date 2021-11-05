@@ -227,13 +227,6 @@ shared_ptr<Configuration> parseCommandLine(int argc, char **argv) {
             return shared_ptr<Configuration>(c);
             continue;
         }
-        if (!strcmp(argv[i], "--reload")) {
-            c->reload = true;
-            if (i > 1 || argc > 2) {
-                error("Usage error: --reload implies no other arguments on the command line.\n");
-            }
-            return shared_ptr<Configuration>(c);
-        }
         if (!strncmp(argv[i], "--format=", 9))
         {
             if (!strcmp(argv[i]+9, "json"))
@@ -284,7 +277,6 @@ shared_ptr<Configuration> parseCommandLine(int argc, char **argv) {
             i++;
             continue;
         }
-
         if (!strncmp(argv[i], "--separator=", 12)) {
             if (!c->fields) {
                 error("You must specify --format=fields before --separator=X\n");
@@ -447,16 +439,22 @@ shared_ptr<Configuration> parseCommandLine(int argc, char **argv) {
             i++;
             continue;
         }
-        if (!strncmp(argv[i], "--json_", 7))
+        if (!strncmp(argv[i], "--json_", 7) ||
+            !strncmp(argv[i], "--field_", 8))
         {
             // For example: --json_floor=42
-            string json = string(argv[i]+7);
-            if (json == "") {
-                error("The json command cannot be empty.\n");
+            // or           --field_floor=42
+            // they are equivalent.
+            int off = 7;
+            if (!strncmp(argv[i], "--field_", 8)) { off = 8; }
+
+            string extra_constant_field = string(argv[i]+off);
+            if (extra_constant_field == "") {
+                error("The extra constant field command cannot be empty.\n");
             }
             // The extra "floor"="42" will be pushed to the json.
-            debug("Added json %s\n", json.c_str());
-            c->jsons.push_back(json);
+            debug("Added extra constant field %s\n", extra_constant_field.c_str());
+            c->extra_constant_fields.push_back(extra_constant_field);
             i++;
             continue;
         }
@@ -481,6 +479,11 @@ shared_ptr<Configuration> parseCommandLine(int argc, char **argv) {
         else if (!strncmp(argv[i], "--listmeters", 12)) {
             c->list_meters = true;
             c->list_meters_search = "";
+            i++;
+            continue;
+        }
+        else if (!strcmp(argv[i], "--listunits")) {
+            c->list_units = true;
             i++;
             continue;
         }
@@ -528,24 +531,27 @@ shared_ptr<Configuration> parseCommandLine(int argc, char **argv) {
             i++;
             continue;
         }
-
-        if (!strcmp(argv[i], "--")) {
-            i++;
-            break;
-        }
         error("Unknown option \"%s\"\n", argv[i]);
     }
 
+    bool found_at_least_one_device_or_hex = false;
     while (argv[i])
     {
-        bool ok = handleDevice(c, argv[i]);
-        if (!ok)
+        if (!strncmp(argv[i], "--", 2))
         {
-            if (!argv[i+1])
+            // We have found a device and the next parameter is an option.
+            error("All command line options must be placed before the devices, %s is placed wrong.\n", argv[i]);
+        }
+        bool ok = handleDeviceOrHex(c, argv[i]);
+        if (ok)
+        {
+            found_at_least_one_device_or_hex = true;
+        }
+        else
+        {
+            if (!found_at_least_one_device_or_hex)
             {
-                // This was the last argument on the commandline.
-                // It should have been a device or a file.
-                error("Not a valid device \"%s\"\n", argv[i]);
+                error("At least one valid device (or hex) must be supplied!\n");
             }
             // There are more arguments...
             break;
@@ -553,14 +559,26 @@ shared_ptr<Configuration> parseCommandLine(int argc, char **argv) {
         i++;
     }
 
-
     if (c->supplied_bus_devices.size() == 0 &&
         c->use_auto_device_detect == false &&
         !c->list_shell_envs &&
         !c->list_fields &&
-        !c->list_meters)
+        !c->list_meters &&
+        !c->list_units)
     {
         error("You must supply at least one device to communicate using (w)mbus.\n");
+    }
+
+    while (argv[i] != 0 && SendBusContent::isLikely(argv[i]))
+    {
+        SendBusContent sbc;
+        bool ok = sbc.parse(argv[i]);
+        if (!ok)
+        {
+            error("Not a valid send bus content command.\n");
+        }
+        c->send_bus_content.push_back(sbc);
+        i++;
     }
 
     if ((argc-i) % 4 != 0) {

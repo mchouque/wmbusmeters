@@ -55,10 +55,9 @@ void parseMeterConfig(Configuration *c, vector<char> &buf, string file)
     string id;
     string key = "";
     string linkmodes;
-    int bps {};
     vector<string> telegram_shells;
     vector<string> alarm_shells;
-    vector<string> jsons;
+    vector<string> extra_constant_fields;
 
     debug("(config) loading meter file %s\n", file.c_str());
     for (;;) {
@@ -118,10 +117,13 @@ void parseMeterConfig(Configuration *c, vector<char> &buf, string file)
             alarm_shells.push_back(p.second);
         }
         else
-        if (startsWith(p.first, "json_"))
+        if (startsWith(p.first, "json_") ||
+            startsWith(p.first, "field_"))
         {
-            string keyvalue = p.first.substr(5)+"="+p.second;
-            jsons.push_back(keyvalue);
+            int off = 5;
+            if (startsWith(p.first, "field_")) { off = 6; }
+            string keyvalue = p.first.substr(off)+"="+p.second;
+            extra_constant_fields.push_back(keyvalue);
         }
         else
             warning("Found invalid key \"%s\" in meter config file\n", p.first.c_str());
@@ -132,42 +134,22 @@ void parseMeterConfig(Configuration *c, vector<char> &buf, string file)
     }
     bool use = true;
 
-    LinkModeSet modes;
-    MeterDriver mt = toMeterDriver(driver);
-    size_t colon = driver.find(':');
-    if (colon == string::npos)
-    {
-        // No suffixes to control the driver.
-        modes = toMeterLinkModeSet(driver);
-    }
-    else
-    {
-        // The config can be supplied after the driver, like this:
-        // apator162:c1
-        // or
-        // pith:mainbus:2400
-        string modess = driver.substr(colon+1);
-        driver = driver.substr(0, colon);
-        mt = toMeterDriver(driver);
-        if (mt == MeterDriver::UNKNOWN) {
-            warning("Not a valid meter driver \"%s\"\n", driver.c_str());
-            use = false;
-        }
-        modes = parseLinkModes(modess);
-        LinkModeSet default_modes = toMeterLinkModeSet(driver);
-        if (!modes.empty() && !default_modes.hasAll(modes))
-        {
-            string want = modes.hr();
-            string has = default_modes.hr();
-            error("(cmdline) cannot set link modes to: %s because meter %s only transmits on: %s\n",
-                  want.c_str(), driver.c_str(), has.c_str());
-        }
+    MeterInfo mi;
+    mi.parse(name, driver, id, key); // sets driver, extras, name, bus, bps, link_modes, ids, name, key
 
-        string modeshr = modes.hr();
-        debug("(cmdline) setting link modes to %s for meter %s\n",
-              modeshr.c_str(), name.c_str());
+    LinkModeSet default_modes = toMeterLinkModeSet(mi.driver);
+    if (!default_modes.hasAll(mi.link_modes))
+    {
+        string want = mi.link_modes.hr();
+        string has = default_modes.hr();
+        error("(cmdline) cannot set link modes to: %s because meter %s only transmits on: %s\n",
+                want.c_str(), toString(mi.driver).c_str(), has.c_str());
     }
+    string modeshr = mi.link_modes.hr();
+    debug("(cmdline) setting link modes to %s for meter %s\n",
+            mi.link_modes.hr().c_str(), name.c_str());
 
+    MeterDriver mt = mi.driver;
     if (mt == MeterDriver::UNKNOWN) {
         warning("Not a valid meter driver \"%s\"\n", driver.c_str());
         use = false;
@@ -181,8 +163,11 @@ void parseMeterConfig(Configuration *c, vector<char> &buf, string file)
         use = false;
     }
     if (use) {
-        vector<string> ids = splitMatchExpressions(id);
-        c->meters.push_back(MeterInfo(bus, name, mt, "", ids, key, modes, bps, telegram_shells, jsons));
+        mi.extra_constant_fields = extra_constant_fields;
+        mi.shells = telegram_shells;
+        mi.idsc = toIdsCommaSeparated(mi.ids);
+
+        c->meters.push_back(mi);
     }
 
     return;
@@ -256,13 +241,23 @@ void handleResetAfter(Configuration *c, string s)
     }
 }
 
-bool handleDevice(Configuration *c, string devicefile)
+bool handleDeviceOrHex(Configuration *c, string devicefilehex)
 {
-    SpecifiedDevice specified_device;
-    bool ok = specified_device.parse(devicefile);
-    if (!ok && SpecifiedDevice::isLikelyDevice(devicefile))
+    bool invalid_hex = false;
+    bool is_hex = isHexString(devicefilehex, &invalid_hex);
+    if (is_hex)
     {
-        error("Not a valid device \"%s\"\n", devicefile.c_str());
+        if (invalid_hex)
+        {
+            error("Hex string must have an even lenght of hexadecimal characters.\n");
+        }
+    }
+
+    SpecifiedDevice specified_device;
+    bool ok = specified_device.parse(devicefilehex);
+    if (!ok && SpecifiedDevice::isLikelyDevice(devicefilehex))
+    {
+        error("Not a valid device \"%s\"\n", devicefilehex.c_str());
     }
 
     if (!ok) return false;
@@ -274,7 +269,7 @@ bool handleDevice(Configuration *c, string devicefile)
     {
         if (!specified_device.linkmodes.empty())
         {
-            error("An mbus device must not have linkmode set. \"%s\"\n", devicefile.c_str());
+            error("An mbus device must not have linkmode set. \"%s\"\n", devicefilehex.c_str());
         }
     }
 
@@ -551,6 +546,11 @@ void handleLogTimestamps(Configuration *c, string ts)
 
 void handleSelectedFields(Configuration *c, string s)
 {
+    if (c->selected_fields.size() > 0)
+    {
+        warning("(warning) selectfields already used! Ignoring selectfields %s", s.c_str());
+        return;
+    }
     char buf[s.length()+1];
     strcpy(buf, s.c_str());
     char *saveptr {};
@@ -572,9 +572,9 @@ void handleAlarmShell(Configuration *c, string cmdline)
     c->alarm_shells.push_back(cmdline);
 }
 
-void handleJson(Configuration *c, string json)
+void handleExtraConstantField(Configuration *c, string field)
 {
-    c->jsons.push_back(json);
+    c->extra_constant_fields.push_back(field);
 }
 
 shared_ptr<Configuration> loadConfiguration(string root, string device_override, string listento_override)
@@ -604,7 +604,7 @@ shared_ptr<Configuration> loadConfiguration(string root, string device_override,
         if (p.first == "loglevel") handleLoglevel(c, p.second);
         else if (p.first == "internaltesting") handleInternalTesting(c, p.second);
         else if (p.first == "ignoreduplicates") handleIgnoreDuplicateTelegrams(c, p.second);
-        else if (p.first == "device") handleDevice(c, p.second);
+        else if (p.first == "device") handleDeviceOrHex(c, p.second);
         else if (p.first == "donotprobe") handleDoNotProbe(c, p.second);
         else if (p.first == "listento") handleListenTo(c, p.second);
         else if (p.first == "logtelegrams") handleLogtelegrams(c, p.second);
@@ -623,11 +623,14 @@ shared_ptr<Configuration> loadConfiguration(string root, string device_override,
         else if (p.first == "shell") handleShell(c, p.second);
         else if (p.first == "resetafter") handleResetAfter(c, p.second);
         else if (p.first == "alarmshell") handleAlarmShell(c, p.second);
-        else if (startsWith(p.first, "json_"))
+        else if (startsWith(p.first, "json_") ||
+                 startsWith(p.first, "field_"))
         {
-            string s = p.first.substr(5);
+            int off = 5;
+            if (startsWith(p.first, "field_")) { off = 6; }
+            string s = p.first.substr(off);
             string keyvalue = s+"="+p.second;
-            handleJson(c, keyvalue);
+            handleExtraConstantField(c, keyvalue);
         }
         else
         {
@@ -660,7 +663,7 @@ shared_ptr<Configuration> loadConfiguration(string root, string device_override,
             device_override = "rtlwmbus";
         }
         debug("(config) overriding device with \"%s\"\n", device_override.c_str());
-        handleDevice(c, device_override);
+        handleDeviceOrHex(c, device_override);
     }
     if (listento_override != "")
     {

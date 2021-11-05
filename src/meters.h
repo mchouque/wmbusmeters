@@ -33,6 +33,9 @@
     X(amiplus,    T1_bit, ElectricityMeter, AMIPLUS,     Amiplus)      \
     X(apator08,   T1_bit,        WaterMeter,       APATOR08,    Apator08)    \
     X(apator162,  C1_bit|T1_bit, WaterMeter,       APATOR162,   Apator162)   \
+    X(aventieswm, T1_bit,        WaterMeter,       AVENTIESWM,  AventiesWM)   \
+    X(aventieshca,T1_bit, HeatCostAllocationMeter, AVENTIESHCA, AventiesHCA)   \
+    X(bfw240radio,T1_bit, HeatCostAllocationMeter, BFW240RADIO, BFW240Radio)   \
     X(cma12w,     C1_bit|T1_bit, TempHygroMeter,   CMA12W,      CMa12w)      \
     X(compact5,   T1_bit, HeatMeter,        COMPACT5,    Compact5)     \
     X(dme_07,     T1_bit, WaterMeter,       DME_07,      DME_07)      \
@@ -67,15 +70,17 @@
     X(multical21, C1_bit|T1_bit, WaterMeter,       MULTICAL21,  Multical21)   \
     X(multical302,C1_bit|T1_bit, HeatMeter,        MULTICAL302, Multical302)  \
     X(multical403,C1_bit, HeatMeter,        MULTICAL403, Multical403)  \
+    X(multical602,C1_bit, HeatMeter,        MULTICAL602, Multical602)  \
     X(multical603,C1_bit, HeatMeter,        MULTICAL603, Multical603)  \
     X(multical803,C1_bit, HeatMeter,        MULTICAL803, Multical803)  \
     X(omnipower,  C1_bit, ElectricityMeter, OMNIPOWER,   Omnipower)    \
-    X(piigth,     MBUS_bit, TempHygroMeter, PIIGTH,        PiigTH)     \
+    X(piigth,     MBUS_bit, TempHygroMeter, PIIGTH,      PiigTH)       \
     X(rfmamb,     T1_bit, TempHygroMeter,   RFMAMB,      RfmAmb)       \
     X(rfmtx1,     T1_bit, WaterMeter,       RFMTX1,      RfmTX1)       \
     X(tsd2,       T1_bit, SmokeDetector,    TSD2,        TSD2)         \
     X(q400,       T1_bit, WaterMeter,       Q400,        Q400)         \
     X(qcaloric,   C1_bit, HeatCostAllocationMeter, QCALORIC, QCaloric) \
+    X(qheat,      T1_bit, HeatMeter,        QHEAT,       QHeat)        \
     X(sensostar,  C1_bit|T1_bit, HeatMeter,SENSOSTAR,  Sensostar)      \
     X(sharky,     T1_bit, HeatMeter,        SHARKY,      Sharky)       \
     X(sontex868,  T1_bit, HeatCostAllocationMeter, SONTEX868, Sontex868) \
@@ -88,7 +93,8 @@
     X(whe5x,      S1_bit, HeatCostAllocationMeter, WHE5X, Whe5x)       \
     X(lse_08,     S1_bit|C1_bit, HeatCostAllocationMeter, LSE_08, LSE_08) \
     X(weh_07,     C1_bit, WaterMeter,       WEH_07,       WEH_07)      \
-
+    X(unismart,   T1_bit, GasMeter,       UNISMART, Unismart)  \
+    X(munia,      T1_bit, TempHygroMeter, MUNIA, Munia) \
 
 enum class MeterDriver {
 #define X(mname,linkmode,info,type,cname) type,
@@ -135,7 +141,7 @@ struct MeterInfo
     LinkModeSet link_modes;
     int bps {};     // For mbus communication you need to know the baud rate.
     vector<string> shells;
-    vector<string> jsons; // Additional static jsons that are added to each message.
+    vector<string> extra_constant_fields; // Additional static fields that are added to each message.
     vector<Unit> conversions; // Additional units desired in json.
 
     // If this is a meter that needs to be polled.
@@ -159,7 +165,7 @@ struct MeterInfo
         idsc = toIdsCommaSeparated(ids);
         key = k;
         shells = s;
-        jsons = j;
+        extra_constant_fields = j;
         link_modes = lms;
         bps = baud;
     }
@@ -173,7 +179,7 @@ struct MeterInfo
         idsc = "";
         key = "";
         shells.clear();
-        jsons.clear();
+        extra_constant_fields.clear();
         link_modes.clear();
         bps = 0;
     }
@@ -217,6 +223,7 @@ struct Meter
 
     virtual string datetimeOfUpdateHumanReadable() = 0;
     virtual string datetimeOfUpdateRobot() = 0;
+    virtual string unixTimestampOfUpdate() = 0;
 
     virtual void onUpdate(std::function<void(Telegram*t,Meter*)> cb) = 0;
     virtual int numUpdates() = 0;
@@ -277,6 +284,27 @@ struct WaterMeter : public virtual Meter
     virtual bool  hasTotalWaterConsumption();
     virtual double targetWaterConsumption(Unit u); // m3
     virtual bool  hasTargetWaterConsumption();
+    virtual double maxFlow(Unit u); // m3/s
+    virtual bool  hasMaxFlow();
+    virtual double flowTemperature(Unit u); // °C
+    virtual bool hasFlowTemperature();
+    virtual double externalTemperature(Unit u); // °C
+    virtual bool hasExternalTemperature();
+
+    virtual string statusHumanReadable();
+    virtual string status();
+    virtual string timeDry();
+    virtual string timeReversed();
+    virtual string timeLeaking();
+    virtual string timeBursting();
+};
+
+struct GasMeter : public virtual Meter
+{
+    virtual double totalGasConsumption(Unit u); // m3
+    virtual bool  hasTotalGasConsumption();
+    virtual double targetGasConsumption(Unit u); // m3
+    virtual bool  hasTargetGasConsumption();
     virtual double maxFlow(Unit u); // m3/s
     virtual bool  hasMaxFlow();
     virtual double flowTemperature(Unit u); // °C

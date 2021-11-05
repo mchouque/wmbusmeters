@@ -47,8 +47,8 @@ ifeq "$(DEBUG)" "true"
         GCOV?=gcov
     endif
 else
-    DEBUG_FLAGS=-Os
-    STRIP_BINARY=$(STRIP) $(BUILD)/wmbusmeters
+    DEBUG_FLAGS=-Os -g
+    STRIP_BINARY=cp $(BUILD)/wmbusmeters $(BUILD)/wmbusmeters.g; $(STRIP) $(BUILD)/wmbusmeters
     GCOV=To_run_gcov_add_DEBUG=true
 endif
 
@@ -88,7 +88,8 @@ endif
 
 $(info Building $(VERSION))
 
-CXXFLAGS ?= $(DEBUG_FLAGS) -fPIC -std=c++11 -Wall -Werror=format-security
+FUZZFLAGS ?= -DFUZZING=false
+CXXFLAGS ?= $(DEBUG_FLAGS) $(FUZZFLAGS) -fPIC -std=c++11 -Wall -Werror=format-security
 CXXFLAGS += -I$(BUILD)
 LDFLAGS  ?= $(DEBUG_LDFLAGS)
 
@@ -137,6 +138,9 @@ METER_OBJS:=\
 	$(BUILD)/wmbus_utils.o \
 	$(BUILD)/meter_apator08.o \
 	$(BUILD)/meter_apator162.o \
+	$(BUILD)/meter_aventieswm.o \
+	$(BUILD)/meter_aventieshca.o \
+	$(BUILD)/meter_bfw240radio.o \
 	$(BUILD)/meter_cma12w.o \
 	$(BUILD)/meter_compact5.o \
 	$(BUILD)/meter_dme_07.o \
@@ -169,12 +173,14 @@ METER_OBJS:=\
 	$(BUILD)/meter_multical21.o \
 	$(BUILD)/meter_multical302.o \
 	$(BUILD)/meter_multical403.o \
+	$(BUILD)/meter_multical602.o \
 	$(BUILD)/meter_multical603.o \
 	$(BUILD)/meter_multical803.o \
 	$(BUILD)/meter_omnipower.o \
 	$(BUILD)/meter_piigth.o \
 	$(BUILD)/meter_q400.o \
 	$(BUILD)/meter_qcaloric.o \
+	$(BUILD)/meter_qheat.o \
 	$(BUILD)/meter_rfmamb.o \
 	$(BUILD)/meter_rfmtx1.o \
 	$(BUILD)/meter_sharky.o \
@@ -191,53 +197,60 @@ METER_OBJS:=\
 	$(BUILD)/meter_gransystems_ccx01.o \
 	$(BUILD)/meter_lse_08.o \
 	$(BUILD)/meter_weh_07.o \
+	$(BUILD)/meter_unismart.o \
+        $(BUILD)/meter_munia.o \
 
 
-all: $(BUILD)/wmbusmeters $(BUILD)/wmbusmeters-admin $(BUILD)/testinternals
-	@$(STRIP_BINARY)
-	@cp $(BUILD)/wmbusmeters $(BUILD)/wmbusmetersd
+all: $(BUILD)/wmbusmeters $(BUILD)/wmbusmetersd $(BUILD)/wmbusmeters.g $(BUILD)/wmbusmeters-admin $(BUILD)/testinternals
 
 deb: wmbusmeters_$(DEBVERSION)_$(DEBARCH).deb
 
-install: $(BUILD)/wmbusmeters
+check_deb:
+	lintian --no-tag-display-limit wmbusmeters_$(DEBVERSION)_$(DEBARCH).deb
+
+check_docs:
+	@cat src/cmdline.cc  | grep -o -- '--[a-z][a-z]*' | sort | uniq | grep -v internaltesting > /tmp/options_in_code
+	@cat wmbusmeters.1   | grep -o -- '--[a-z][a-z]*' | sort | uniq | grep -v internaltesting > /tmp/options_in_man
+	@cat README.md | grep -o -- '--[a-z][a-z]*' | sort | uniq | grep -v internaltesting > /tmp/options_in_readme
+	@./build/wmbusmeters --help | grep -o -- '--[a-z][a-z]*' | sort | uniq | grep -v internaltesting > /tmp/options_in_binary
+	@diff /tmp/options_in_code /tmp/options_in_man || echo CODE_VS_MAN
+	@diff /tmp/options_in_code /tmp/options_in_readme || echo CODE_VS_README
+	@diff /tmp/options_in_code /tmp/options_in_binary || echo CODE_VS_BINARY
+	@echo "OK docs"
+
+install: $(BUILD)/wmbusmeters check_docs
 	@./install.sh $(BUILD)/wmbusmeters $(DESTDIR) $(EXTRA_INSTALL_OPTIONS)
 
 uninstall:
 	@./uninstall.sh /
 
 wmbusmeters_$(DEBVERSION)_$(DEBARCH).deb:
-	@rm -rf $(BUILD)/debian/wmbusmeters
-	@mkdir -p $(BUILD)/debian/wmbusmeters/DEBIAN
-	@./install.sh $(BUILD)/wmbusmeters $(BUILD)/debian/wmbusmeters --no-adduser
-	@rm -f $(BUILD)/debian/wmbusmeters/DEBIAN/control
-	@echo "Package: wmbusmeters" >> $(BUILD)/debian/wmbusmeters/DEBIAN/control
-	@echo "Version: $(DEBVERSION)" >> $(BUILD)/debian/wmbusmeters/DEBIAN/control
-	@echo "Maintainer: Fredrik Öhrström" >> $(BUILD)/debian/wmbusmeters/DEBIAN/control
-	@echo "Architecture: $(DEBARCH)" >> $(BUILD)/debian/wmbusmeters/DEBIAN/control
-	@echo "Description: A tool to read wireless mbus telegrams from utility meters." >> $(BUILD)/debian/wmbusmeters/DEBIAN/control
-	@for x in preinst postinst prerm postrm ; do \
-		cp scripts/$$x $(BUILD)/debian/wmbusmeters/DEBIAN/ ; \
-		chmod 555 $(BUILD)/debian/wmbusmeters/DEBIAN/$$x ; \
-	done
-	@(cd $(BUILD)/debian; dpkg-deb --build wmbusmeters .)
-	@mv $(BUILD)/debian/wmbusmeters_$(DEBVERSION)_$(DEBARCH).deb .
-	@echo Built package $@
-	@echo But the deb package is not yet working correctly! Work in progress.
+	@./deb/create_deb.sh $(BUILD) $@ $(DEBVERSION) $(DEBARCH)
 
 snapcraft:
 	snapcraft
 
 $(BUILD)/main.o: $(BUILD)/short_manual.h $(BUILD)/version.h
 
-$(BUILD)/wmbusmeters: $(METER_OBJS) $(BUILD)/main.o $(BUILD)/short_manual.h
-	$(CXX) -o $(BUILD)/wmbusmeters $(METER_OBJS) $(BUILD)/main.o $(LDFLAGS) -lrtlsdr $(USBLIB) -lpthread
+# Build binary with debug information. ~15M size binary.
+$(BUILD)/wmbusmeters.g: $(METER_OBJS) $(BUILD)/main.o $(BUILD)/short_manual.h
+	$(CXX) -o $(BUILD)/wmbusmeters.g $(METER_OBJS) $(BUILD)/main.o $(LDFLAGS) -lrtlsdr $(USBLIB) -lpthread
+
+# Production build will have debug information stripped. ~1.5M size binary.
+# DEBUG=true builds, which has address sanitizer code, will always keep the debug information.
+$(BUILD)/wmbusmeters: $(BUILD)/wmbusmeters.g
+	cp $(BUILD)/wmbusmeters.g $(BUILD)/wmbusmeters
+	$(STRIP_BINARY)
+
+$(BUILD)/wmbusmetersd: $(BUILD)/wmbusmeters
+	cp $(BUILD)/wmbusmeters $(BUILD)/wmbusmetersd
 
 ifeq ($(shell uname -s),Darwin)
 $(BUILD)/wmbusmeters-admin:
 	touch $(BUILD)/wmbusmeters-admin
 else
 $(BUILD)/wmbusmeters-admin: $(METER_OBJS) $(BUILD)/admin.o $(BUILD)/ui.o $(BUILD)/short_manual.h
-	$(CXX) -o $(BUILD)/wmbusmeters-admin $(METER_OBJS) $(BUILD)/admin.o $(BUILD)/ui.o $(LDFLAGS) -lmenu -lform -lncurses -lrtlsdr $(USBLIB) -lpthread
+	$(CXX) -o $(BUILD)/wmbusmeters-admin.g $(METER_OBJS) $(BUILD)/admin.o $(BUILD)/ui.o $(LDFLAGS) -lmenu -lform -lncurses -lrtlsdr $(USBLIB) -lpthread
 endif
 
 $(BUILD)/short_manual.h: README.md
@@ -260,9 +273,18 @@ clean_cc:
 	find . -name "*.gcov" -delete
 	find . -name "*.gcda" -delete
 
+# This generates annotated source files ending in .gcov
+# inside the build_debug where non-executed source lines are marked #####
 gcov:
+	@if [ "$(DEBUG)" = "" ]; then echo "You have to run \"make gcov DEBUG=true\""; exit 1; fi
 	$(GCOV) -o build_debug $(METER_OBJS)
 	mv *.gcov build_debug
+
+lcov:
+	@if [ "$(DEBUG)" = "" ]; then echo "You have to run \"make lcov DEBUG=true\""; exit 1; fi
+	lcov --directory . -c --no-external --output-file build_debug/lcov.info
+	(cd build_debug; genhtml lcov.info)
+	xdg-open build_debug/src/index.html
 
 test:
 	@./test.sh build/wmbusmeters
@@ -331,18 +353,37 @@ update_manufacturers:
 	mv m.h src/manufacturers.h
 	rm *.flags manufacturers.txt
 
-build_fuzz:
-	@if [ "${AFLHOME}" = "" ]; then echo 'You must supply aflhome "make build_fuzz AFLHOME=/home/afl"'; exit 1; fi
-	$(MAKE) AFL_HARDEN=1 CXX=$(AFLHOME)/afl-g++ $(BUILD)/fuzz
-	$(MAKE) AFL_HARDEN=1 CXX=$(AFLHOME)/afl-g++ $(BUILD)/wmbusmeters
+
+GCC_MAJOR_VERSION:=$(shell gcc --version | head -n 1 | sed 's/.* \([0-9]\)\.[0-9]\.[0-9]$$/\1/')
+AFL_HOME:=AFLplusplus
+
+$(AFL_HOME)/src/afl-cc.c:
+	mkdir -p AFLplusplus
+	if ! dpkg -s gcc-$(GCC_MAJOR_VERSION)-plugin-dev 2>/dev/null >/dev/null ; then echo "Please run: sudo apt install gcc-$(GCC_MAJOR_VERSION)-plugin-dev"; exit 1; fi
+	git clone https://github.com/AFLplusplus/AFLplusplus.git
+
+afl_prepared:  AFLplusplus/src/afl-cc.c
+	(cd AFLplusplus; make)
+	touch afl_prepared
+
+build_fuzz: afl_prepared
+	$(MAKE) AFL_HARDEN=1 CXX=$(AFL_HOME)/afl-g++-fast FUZZFLAGS=-DFUZZING=true $(BUILD)/fuzz
+	$(MAKE) AFL_HARDEN=1 CXX=$(AFL_HOME)/afl-g++-fast FUZZFLAGS=-DFUZZING=true $(BUILD)/wmbusmeters
 
 run_fuzz_difvifparser:
-	@if [ "${AFLHOME}" = "" ]; then echo 'You must supply aflhome "make run_fuzz AFLHOME=/home/afl"'; exit 1; fi
-	${AFLHOME}/afl-fuzz -i fuzz_testcases/difvifparser -o fuzz_findings/ build/fuzz
+	${AFL_HOME}/afl-fuzz -i fuzz_testcases/difvifparser -o fuzz_findings_difvifparser/ build/fuzz
 
-run_fuzz_telegrams:
-	@if [ "${AFLHOME}" = "" ]; then echo 'You must supply aflhome "make run_fuzz AFLHOME=/home/afl"'; exit 1; fi
-	${AFLHOME}/afl-fuzz -i fuzz_testcases/telegrams -o fuzz_findings/ build/wmbusmeters --listento=any stdin
+run_fuzz_telegrams: extract_fuzz_telegram_seeds
+	${AFL_HOME}/afl-fuzz -i fuzz_testcases/telegrams -o fuzz_findings_telegrams/ build/wmbusmeters --listento=any stdin
+
+extract_fuzz_telegram_seeds:
+	@cat simulations/simulation_* | grep "^telegram=" | tr -d '|' | sed 's/^telegram=//' > $(BUILD)/seeds
+	@mkdir -p fuzz_testcases/telegrams
+	@rm -f fuzz_testcases/telegrams/seed_*
+	@SEED=1; while read -r line; do echo "$${line}" | xxd -r -p - > "fuzz_testcases/telegrams/seed_$${SEED}"; SEED=$$((SEED + 1)); done < $(BUILD)/seeds; echo "Extracted $${SEED} seeds from simulations."
+
+relay: utils/relay.c
+	gcc -g utils/relay.c -o relay -O0 -ggdb -fsanitize=address -fno-omit-frame-pointer -fprofile-arcs -ftest-coverage
 
 # Include dependency information generated by gcc in a previous compile.
 include $(wildcard $(patsubst %.o,%.d,$(METER_OBJS)))

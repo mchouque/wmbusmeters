@@ -39,6 +39,7 @@ bool trimCRCsFrameFormatB(std::vector<uchar> &payload);
     X(IM871A,im871a,true,false,detectIM871AIM170A)   \
     X(IM170A,im170a,true,false,detectSKIP)           \
     X(RAWTTY,rawtty,true,false,detectRAWTTY)         \
+    X(HEXTTY,hextty,true,false,detectSKIP)           \
     X(RC1180,rc1180,true,false,detectRC1180)         \
     X(RTL433,rtl433,false,true,detectRTL433)         \
     X(RTLWMBUS,rtlwmbus,false,true,detectRTLWMBUS)   \
@@ -49,6 +50,9 @@ enum WMBusDeviceType {
 LIST_OF_MBUS_DEVICES
 #undef X
 };
+
+enum class ContentStartsWith { C_FIELD, CI_FIELD, SHORT_FRAME, LONG_FRAME };
+const char *toString(ContentStartsWith sw);
 
 bool usesTTY(WMBusDeviceType t);
 bool usesRTLSDR(WMBusDeviceType t);
@@ -151,10 +155,11 @@ bool isValidLinkModes(string modes);
 // It has this format "alias=file:type(id):fq:bps:linkmods:CMD(command)"
 struct SpecifiedDevice
 {
-    std::string alias; // A bus alias, usually not necessary for wmbus but necessary for mbus.
+    std::string bus_alias; // A bus alias, necessary for C2/T2 meters and mbus.
     int index; // 0,1,2,3 the order on the command line / config file.
     std::string file; // simulation_meter.txt, stdin, file.raw, /dev/ttyUSB0
-    bool is_tty{}, is_stdin{}, is_file{}, is_simulation{};
+    std::string hex; // a hex string supplied on the command line becomes a hex simulation.
+    bool is_tty{}, is_stdin{}, is_file{}, is_simulation{}, is_hex_simulation{};
     WMBusDeviceType type; // im871a, rtlwmbus
     std::string id; // 12345678 for wmbus dongles or 0,1 for rtlwmbus indexes.
     std::string extras; // Extra device specific settings.
@@ -177,6 +182,7 @@ struct Detected
     SpecifiedDevice specified_device {}; // Device as specified from the command line / config file.
 
     string found_file; // The device file to use.
+    string found_hex;  // An immediate hex string is supplied.
     string found_device_id; // An "unique" identifier, typically the id used by the dongle as its own wmbus id, if it transmits.
     WMBusDeviceType found_type {};  // IM871A, AMB8465 etc.
     int found_bps {}; // Serial speed of tty.
@@ -478,8 +484,11 @@ struct Telegram
     vector<pair<int,string>> explanations;
     void addExplanationAndIncrementPos(vector<uchar>::iterator &pos, int len, const char* fmt, ...);
     void addMoreExplanation(int pos, const char* fmt, ...);
+    // Add an explanation of data inside manufacturer specific data.
+    void addSpecialExplanation(int offset, const char* fmt, ...);
     void explainParse(string intro, int from);
 
+    bool parserWarns() { return parser_warns_; }
     bool isSimulated() { return is_simulated_; }
     void markAsSimulated() { is_simulated_ = true; }
 
@@ -536,13 +545,23 @@ private:
     bool findFormatBytesFromKnownMeterSignatures(std::vector<uchar> *format_bytes);
 };
 
+struct SendBusContent
+{
+    string bus;
+    string content;
+    ContentStartsWith starts_with;
+
+    static bool isLikely(const string &s);
+    bool parse(const string &s);
+};
+
 struct Meter;
 
 struct WMBus
 {
     // Each bus can be given an alias name to be
     // referred to from meters.
-    virtual std::string alias() = 0;
+    virtual std::string busAlias() = 0;
 
     // I wmbus device identifier consists of:
     // device:type[id] for example:
@@ -569,7 +588,7 @@ struct WMBus
     virtual bool canSetLinkModes(LinkModeSet lms) = 0;
     virtual void setLinkModes(LinkModeSet lms) = 0;
     virtual void onTelegram(function<bool(AboutTelegram&,vector<uchar>)> cb) = 0;
-    virtual void sendTelegram(Telegram *t) = 0;
+    virtual bool sendTelegram(ContentStartsWith starts_with, vector<uchar> &content) = 0;
     virtual SerialDevice *serial() = 0;
     // Return true of the serial has been overridden, usually with stdin or a file.
     virtual bool serialOverride() = 0;
@@ -596,9 +615,9 @@ struct WMBus
     virtual ~WMBus() = 0;
 };
 
-Detected detectWMBusDeviceWithFile(SpecifiedDevice &specified_device,
-                                   LinkModeSet default_linkmodes,
-                                   shared_ptr<SerialCommunicationManager> manager);
+Detected detectWMBusDeviceWithFileOrHex(SpecifiedDevice &specified_device,
+                                        LinkModeSet default_linkmodes,
+                                        shared_ptr<SerialCommunicationManager> manager);
 Detected detectWMBusDeviceWithCommand(SpecifiedDevice &specified_device,
                                       LinkModeSet default_linkmodes,
                                       shared_ptr<SerialCommunicationManager> handler);
@@ -614,6 +633,9 @@ shared_ptr<WMBus> openAMB8465(Detected detected,
                               shared_ptr<SerialCommunicationManager> manager,
                               shared_ptr<SerialDevice> serial_override);
 shared_ptr<WMBus> openRawTTY(Detected detected,
+                             shared_ptr<SerialCommunicationManager> manager,
+                             shared_ptr<SerialDevice> serial_override);
+shared_ptr<WMBus> openHexTTY(Detected detected,
                              shared_ptr<SerialCommunicationManager> manager,
                              shared_ptr<SerialDevice> serial_override);
 shared_ptr<WMBus> openMBUS(Detected detected,
@@ -665,17 +687,6 @@ MeasurementType difMeasurementType(int dif);
 
 string linkModeName(LinkMode link_mode);
 string measurementTypeName(MeasurementType mt);
-
-AccessCheck findAndDetect(shared_ptr<SerialCommunicationManager> manager,
-                          string *out_device,
-                          function<AccessCheck(string,shared_ptr<SerialCommunicationManager>)> check,
-                          string dongle_name,
-                          string device_root);
-
-AccessCheck checkAccessAndDetect(shared_ptr<SerialCommunicationManager> manager,
-                                 function<AccessCheck(string,shared_ptr<SerialCommunicationManager>)> check,
-                                 string dongle_name,
-                                 string device);
 
 enum FrameStatus { PartialFrame, FullFrame, ErrorInFrame, TextAndNotFrame };
 

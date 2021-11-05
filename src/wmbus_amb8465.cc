@@ -31,6 +31,8 @@
 
 using namespace std;
 
+uchar xorChecksum(vector<uchar> &msg, size_t offset, size_t len);
+
 struct ConfigAMB8465
 {
     uchar uart_ctl0 {};
@@ -55,10 +57,9 @@ struct ConfigAMB8465
         return ids;
     }
 
-    bool decode(vector<uchar> &bytes)
+    bool decodeNoFrame(vector<uchar> &bytes, size_t o)
     {
-        size_t o = 5;
-        if (bytes.size() < o) return false;
+        if (bytes.size() < o+69) return false;
 
         uart_ctl0 = bytes[0+o];
         uart_ctl1 = bytes[0+o];
@@ -71,6 +72,50 @@ struct ConfigAMB8465
         media = bytes[57+o];
 
         auto_rssi = bytes[69+o];
+        return true;
+    }
+
+    bool decode(vector<uchar> &bytes, size_t offset)
+    {
+        // The first 5 bytes are:
+        // 0xFF
+        // 0x8A
+        // <num_bytes+2[0x7a]>
+        // <memory_start[0x00]>
+        // <num_bytes[0x78]>
+        // then follows the parameter bytes
+        // 0x78 parameter bytes
+        // <check_sum byte>
+        // Total length 0x7e
+        if (bytes.size() < offset+5) return false;
+        if (bytes[offset+0] != 0xff ||
+            bytes[offset+1] != 0x8a ||
+            bytes[offset+2] != 0x7a ||
+            bytes[offset+3] != 0x00 ||
+            bytes[offset+4] != 0x78)
+        {
+            debug("(amb8465) not the right header decoding ConfigAMB8465!\n");
+            return false;
+        }
+        if (bytes.size() < offset+0x7e)
+        {
+            debug("(amb8465) not enough data for decoding ConfigAMB8465!\n");
+            return false;
+        }
+        size_t o = offset+5;
+
+        decodeNoFrame(bytes, o);
+
+        uchar received_crc = bytes[offset + 0x7e - 1];
+        uchar calculated_crc = xorChecksum(bytes, offset, 0x7e - 1);
+        if (received_crc != calculated_crc)
+        {
+            debug("(amb8465) bad crc in response! Expected %02x but got %02x\n", calculated_crc, received_crc);
+            return false;
+        }
+
+        string tmp = str();
+        debug("(amb8465) proprely decoded ConfigAMB8465 response. Content: %s\n", tmp.c_str());
 
         return true;
     }
@@ -141,19 +186,19 @@ private:
 
 shared_ptr<WMBus> openAMB8465(Detected detected, shared_ptr<SerialCommunicationManager> manager, shared_ptr<SerialDevice> serial_override)
 {
-    string alias  = detected.specified_device.alias;
+    string bus_alias  = detected.specified_device.bus_alias;
     string device = detected.found_file;
     assert(device != "");
 
     if (serial_override)
     {
-        WMBusAmber *imp = new WMBusAmber(alias, serial_override, manager);
+        WMBusAmber *imp = new WMBusAmber(bus_alias, serial_override, manager);
         imp->markAsNoLongerSerial();
         return shared_ptr<WMBus>(imp);
     }
 
     auto serial = manager->createSerialDeviceTTY(device.c_str(), 9600, PARITY::NONE, "amb8465");
-    WMBusAmber *imp = new WMBusAmber(alias, serial, manager);
+    WMBusAmber *imp = new WMBusAmber(bus_alias, serial, manager);
     return shared_ptr<WMBus>(imp);
 }
 
@@ -169,11 +214,11 @@ void WMBusAmber::deviceReset()
     timerclear(&timestamp_last_rx_);
 }
 
-uchar xorChecksum(vector<uchar> &msg, size_t len)
+uchar xorChecksum(vector<uchar> &msg, size_t offset, size_t len)
 {
-    assert(msg.size() >= len);
+    assert(msg.size() >= len+offset);
     uchar c = 0;
-    for (size_t i=0; i<len; ++i) {
+    for (size_t i=offset; i<len+offset; ++i) {
         c ^= msg[i];
     }
     return c;
@@ -210,7 +255,7 @@ string WMBusAmber::getDeviceUniqueId()
     request_[0] = AMBER_SERIAL_SOF;
     request_[1] = CMD_SERIALNO_REQ;
     request_[2] = 0; // No payload
-    request_[3] = xorChecksum(request_, 3);
+    request_[3] = xorChecksum(request_, 0, 3);
 
     verbose("(amb8465) get device unique id\n");
     bool sent = serial()->send(request_);
@@ -255,7 +300,7 @@ bool WMBusAmber::getConfiguration()
     request_[2] = 0x02;
     request_[3] = 0x00;
     request_[4] = 0x80;
-    request_[5] = xorChecksum(request_, 5);
+    request_[5] = xorChecksum(request_, 0, 5);
 
     assert(request_[5] == 0x77);
 
@@ -266,7 +311,7 @@ bool WMBusAmber::getConfiguration()
     bool ok = waitForResponse(CMD_GET_REQ | 0x80);
     if (!ok) return false;
 
-    return device_config_.decode(response_);
+    return device_config_.decodeNoFrame(response_, 3);
 }
 
 void WMBusAmber::deviceSetLinkModes(LinkModeSet lms)
@@ -305,7 +350,7 @@ void WMBusAmber::deviceSetLinkModes(LinkModeSet lms)
         // Listening only to S1 and S1-m
         request_[3] = 0x03;
     }
-    request_[4] = xorChecksum(request_, 4);
+    request_[4] = xorChecksum(request_, 0, 4);
 
     verbose("(amb8465) set link mode %02x\n", request_[3]);
     bool sent = serial()->send(request_);
@@ -358,7 +403,7 @@ FrameStatus WMBusAmber::checkAMB8465Frame(vector<uchar> &data,
 
         debug("(amb8465) received full command frame\n");
 
-        uchar cs = xorChecksum(data, *frame_length-1);
+        uchar cs = xorChecksum(data, 0, *frame_length-1);
         if (data[*frame_length-1] != cs) {
             verbose("(amb8465) checksum error %02x (should %02x)\n", data[*frame_length-1], cs);
         }
@@ -542,70 +587,132 @@ void WMBusAmber::handleMessage(int msgid, vector<uchar> &frame, int rssi_dbm)
 
 AccessCheck detectAMB8465(Detected *detected, shared_ptr<SerialCommunicationManager> manager)
 {
+    assert(detected->found_file != "");
+
     // Talk to the device and expect a very specific answer.
     auto serial = manager->createSerialDeviceTTY(detected->found_file.c_str(), 9600, PARITY::NONE, "detect amb8465");
     serial->disableCallbacks();
-    AccessCheck rc = serial->open(false);
-    if (rc != AccessCheck::AccessOK) return AccessCheck::NotThere;
+    bool ok = serial->open(false);
+    if (!ok)
+    {
+        verbose("(amb8465) could not open tty %s for detection\n", detected->found_file.c_str());
+        return AccessCheck::NoSuchDevice;
+    }
 
     vector<uchar> response;
-    // First clear out any data in the queue.
-    serial->receive(&response);
-    response.clear();
+    int count = 1;
+    // First clear out any data in the queue, this might require multiple reads.
+    for (;;)
+    {
+        size_t n = serial->receive(&response);
+        count++;
+        if (n == 0) break;
+        if (count > 10)
+        {
+            break;
+        }
+        usleep(1000*100);
+        continue;
+    }
 
+    if (response.size() > 0)
+    {
+        if (count <= 10)
+        {
+            debug("(amb8465) cleared %zu bytes from serial buffer\n", response.size());
+        }
+        else
+        {
+            debug("(amb8465) way too much data received %zu when trying to detect! cannot clear serial buffer!\n",
+                  response.size());
+        }
+
+        response.clear();
+    }
+
+    // Query all of the non-volatile parameter memory.
     vector<uchar> request;
     request.resize(6);
     request[0] = AMBER_SERIAL_SOF;
     request[1] = CMD_GET_REQ;
     request[2] = 0x02;
-    request[3] = 0x00;
-    request[4] = 0x80;
-    request[5] = xorChecksum(request, 5);
+    request[3] = 0x00; // Start at byte 0
+    request[4] = 0x80; // End at byte 127
+    request[5] = xorChecksum(request, 0, 5);
 
     assert(request[5] == 0x77);
 
-    bool sent = serial->send(request);
-    if (!sent) {
-        serial->close();
-        return AccessCheck::NotThere;
-    }
+    bool sent = false;
+    count = 0;
+    do
+    {
+        debug("(amb8465) sending %zu bytes attempt %d\n", request.size(), count);
+        sent = serial->send(request);
+        debug("(amb8465) sent %zu bytes %s\n", request.size(), sent?"OK":"Failed");
+        if (!sent)
+        {
+            // We failed to send! Why? We have successfully opened the tty....
+            // Perhaps the dongle needs to wake up. Lets try again in 100 ms.
+            usleep(1000*100);
+            count ++;
+            if (count >= 4)
+            {
+                // Tried and failed 3 times.
+                debug("(amb8465) failed to sent query! Giving up!\n");
+                verbose("(amb8465) are you there? no, nothing is there.\n");
+                serial->close();
+                return AccessCheck::NoProperResponse;
+            }
+        }
+    } while (sent == false && count < 4);
 
-    serial->send(request);
     // Wait for 100ms so that the USB stick have time to prepare a response.
     usleep(1000*100);
 
+    ConfigAMB8465 config;
     vector<uchar> data;
-    int count = 0;
-    while (response.size() < 0x7E && count < 2)
+    count = 1;
+    for (;;)
     {
+        if (count > 3)
+        {
+            verbose("(amb8465) are you there? no.\n");
+            serial->close();
+            return AccessCheck::NoProperResponse;
+        }
+        debug("(amb8465) reading response... %d\n", count);
+
         size_t n = serial->receive(&data);
+        count++;
         if (n == 0)
         {
             usleep(1000*100);
-            count++;
             continue;
         }
         response.insert(response.end(), data.begin(), data.end());
+        size_t offset = findBytes(response, 0xff, 0x8A, 0x7A);
+
+        if (offset == ((size_t)-1))
+        {
+            // No response found yet, lets wait for more bytes.
+            usleep(1000*100);
+            continue;
+        }
+
+        // We have the start of the response, but do we have enough bytes?
+        bool ok = config.decode(response, offset);
+        // Yes!
+        if (ok) {
+            debug("(amb8465) found response at offset %zu\n", offset);
+            break;
+        }
+        // No complete response found yet, lets wait for more bytes.
+        usleep(1000*100);
     }
 
     serial->close();
 
     // FF8A7A00780080710200000000FFFFFA00FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF003200021400FFFFFFFFFF010004000000FFFFFF01440000000000000000FFFF0B040100FFFFFFFFFF00030000FFFFFFFFFFFFFF0000FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF17
-
-    if (response.size() < 8 ||
-        response[0] != 0xff ||
-        response[1] != (0x80 | request[1]) ||
-        response[2] != 0x7A)
-    {
-        verbose("(amb8465) are you there? no.\n");
-        serial->close();
-        return AccessCheck::NotThere;
-    }
-
-    serial->close();
-
-    ConfigAMB8465 config;
-    config.decode(response);
 
     detected->setAsFound(config.dongleId(), WMBusDeviceType::DEVICE_AMB8465, 9600, false,
         detected->specified_device.linkmodes);
@@ -620,10 +727,11 @@ static AccessCheck tryFactoryResetAMB8465(string device, shared_ptr<SerialCommun
 {
     // Talk to the device and expect a very specific answer.
     auto serial = manager->createSerialDeviceTTY(device.c_str(), baud, PARITY::NONE, "reset amb8465");
-    AccessCheck rc = serial->open(false);
-    if (rc != AccessCheck::AccessOK) {
-        verbose("(amb8465) could not open device %s using baud %d\n", device.c_str(), baud);
-        return AccessCheck::NotThere;
+    bool ok = serial->open(false);
+    if (!ok)
+    {
+        verbose("(amb8465) could not open device %s using baud %d for reset\n", device.c_str(), baud);
+        return AccessCheck::NoSuchDevice;
     }
 
     vector<uchar> data;
@@ -636,7 +744,7 @@ static AccessCheck tryFactoryResetAMB8465(string device, shared_ptr<SerialCommun
     request_[0] = AMBER_SERIAL_SOF;
     request_[1] = CMD_FACTORYRESET_REQ;
     request_[2] = 0; // No payload
-    request_[3] = xorChecksum(request_, 3);
+    request_[3] = xorChecksum(request_, 0, 3);
 
     assert(request_[3] == 0xee);
 
@@ -668,10 +776,10 @@ static AccessCheck tryFactoryResetAMB8465(string device, shared_ptr<SerialCommun
         data[1] != 0x90 ||
         data[2] != 0x01 ||
         data[3] != 0x00 || // Status should be 0.
-        data[4] != xorChecksum(data, 4))
+        data[4] != xorChecksum(data, 0, 4))
     {
         verbose("(amb8465) no response to factory reset %s using baud %d\n", device.c_str(), baud);
-        return AccessCheck::NotThere;
+        return AccessCheck::NoProperResponse;
     }
     verbose("(amb8465) received proper factory reset response %s using baud %d\n", device.c_str(), baud);
     return AccessCheck::AccessOK;
@@ -681,7 +789,7 @@ int bauds[] = { 1200, 2400, 4800, 9600, 19200, 38400, 56000, 115200, 0 };
 
 AccessCheck factoryResetAMB8465(string device, shared_ptr<SerialCommunicationManager> manager, int *was_baud)
 {
-    AccessCheck rc = AccessCheck::NotThere;
+    AccessCheck rc = AccessCheck::NoSuchDevice;
 
     for (int i=0; bauds[i] != 0; ++i)
     {
@@ -693,5 +801,5 @@ AccessCheck factoryResetAMB8465(string device, shared_ptr<SerialCommunicationMan
         }
     }
     *was_baud = 0;
-    return AccessCheck::NotThere;
+    return AccessCheck::NoSuchDevice;
 }

@@ -102,12 +102,21 @@ if [ "$?" != "0" ]; then RC="1"; fi
 ./tests/test_match_dll_and_tpl_id.sh $PROG
 if [ "$?" != "0" ]; then RC="1"; fi
 
+./tests/test_unix_timestamp.sh $PROG
+if [ "$?" != "0" ]; then RC="1"; fi
+
 ./tests/test_log_timestamps.sh $PROG
+if [ "$?" != "0" ]; then RC="1"; fi
+
+./tests/test_meter_extras.sh $PROG
+if [ "$?" != "0" ]; then RC="1"; fi
+
+./tests/test_hex_cmdline.sh $PROG
 if [ "$?" != "0" ]; then RC="1"; fi
 
 if [ -x ../additional_tests.sh ]
 then
-    (cd ..; ./additional_tests.sh)
+    (cd ..; ./additional_tests.sh $PROG)
 fi
 
 echo Slower tests...

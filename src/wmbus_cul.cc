@@ -84,17 +84,17 @@ private:
 
 shared_ptr<WMBus> openCUL(Detected detected, shared_ptr<SerialCommunicationManager> manager, shared_ptr<SerialDevice> serial_override)
 {
-    string alias =  detected.specified_device.alias;
+    string bus_alias =  detected.specified_device.bus_alias;
     string device = detected.found_file;
     if (serial_override)
     {
-        WMBusCUL *imp = new WMBusCUL(alias, serial_override, manager);
+        WMBusCUL *imp = new WMBusCUL(bus_alias, serial_override, manager);
         imp->markAsNoLongerSerial();
         return shared_ptr<WMBus>(imp);
     }
 
     auto serial = manager->createSerialDeviceTTY(device.c_str(), 38400, PARITY::NONE, "cul");
-    WMBusCUL *imp = new WMBusCUL(alias, serial, manager);
+    WMBusCUL *imp = new WMBusCUL(bus_alias, serial, manager);
     return shared_ptr<WMBus>(imp);
 }
 
@@ -382,8 +382,8 @@ AccessCheck detectCUL(Detected *detected, shared_ptr<SerialCommunicationManager>
     // Talk to the device and expect a very specific answer.
     auto serial = manager->createSerialDeviceTTY(detected->found_file.c_str(), 38400, PARITY::NONE, "detect cul");
     serial->disableCallbacks();
-    AccessCheck rc = serial->open(false);
-    if (rc != AccessCheck::AccessOK) return AccessCheck::NotThere;
+    bool ok = serial->open(false);
+    if (!ok) return AccessCheck::NoSuchDevice;
 
     bool found = false;
     for (int i=0; i<3; ++i)
@@ -401,7 +401,7 @@ AccessCheck detectCUL(Detected *detected, shared_ptr<SerialCommunicationManager>
         if (!ok)
         {
             verbose("(cul) are you there? no\n");
-            return AccessCheck::NotThere;
+            return AccessCheck::NoSuchDevice;
         }
 
         // Wait for 200ms so that the USB stick have time to prepare a response.
@@ -422,7 +422,7 @@ AccessCheck detectCUL(Detected *detected, shared_ptr<SerialCommunicationManager>
     if (!found)
     {
         verbose("(cul) are you there? no\n");
-        return AccessCheck::NotThere;
+        return AccessCheck::NoProperResponse;
     }
 
     detected->setAsFound("", WMBusDeviceType::DEVICE_CUL, 38400, false, detected->specified_device.linkmodes);

@@ -141,6 +141,11 @@ int char2int(char input)
     return -1;
 }
 
+bool isHexChar(uchar c)
+{
+    return char2int(c) != -1;
+}
+
 // The byte 0x13 i converted into the integer value 13.
 uchar bcd2bin(uchar c)
 {
@@ -156,6 +161,30 @@ uchar revbcd2bin(uchar c)
 uchar reverse(uchar c)
 {
     return ((c&15)<<4) | (c>>4);
+}
+
+bool isHexString(const string &txt, bool *invalid)
+{
+    return isHexString(txt.c_str(), invalid);
+}
+
+bool isHexString(const char* txt, bool *invalid)
+{
+    *invalid = false;
+    // An empty string is not an hex string.
+    if (*txt == 0) return false;
+
+    const char *i = txt;
+    int n = 0;
+    for (;;)
+    {
+        char c = *i++;
+        if (c == 0) break;
+        n++;
+        if (char2int(c) == -1) return false;
+    }
+    if (n%2 == 1) *invalid = true;
+    return true;
 }
 
 bool hex2bin(const char* src, vector<uchar> *target)
@@ -211,6 +240,19 @@ std::string bin2hex(vector<uchar>::iterator data, vector<uchar>::iterator end, i
     while (data != end && len-- > 0) {
         const char ch = *data;
         data++;
+        str.append(&hex[(ch  & 0xF0) >> 4], 1);
+        str.append(&hex[ch & 0xF], 1);
+    }
+    return str;
+}
+
+std::string bin2hex(vector<uchar> &data, int offset, int len) {
+    std::string str;
+    vector<uchar>::iterator i = data.begin();
+    i += offset;
+    while (i != data.end() && len-- > 0) {
+        const char ch = *i;
+        i++;
         str.append(&hex[(ch  & 0xF0) >> 4], 1);
         str.append(&hex[ch & 0xF], 1);
     }
@@ -1051,8 +1093,9 @@ uint16_t crc16_EN13757(uchar *data, size_t len)
     uint16_t crc = 0x0000;
 
     assert(len == 0 || data != NULL);
-    assert(len < 1024);
-    for (size_t i=0; i<len; ++i) {
+
+    for (size_t i=0; i<len; ++i)
+    {
         crc = crc16_EN13757_per_byte(crc, data[i]);
     }
 
@@ -1330,36 +1373,70 @@ void addMonths(struct tm *date, int months)
     date->tm_mday = day;
 }
 
-AccessCheck checkIfExistsAndSameGroup(string device)
+const char* toString(AccessCheck ac)
 {
-    struct stat sb;
+    switch (ac)
+    {
+    case AccessCheck::NoSuchDevice: return "NoSuchDevice";
+    case AccessCheck::NoProperResponse: return "NoProperResponse";
+    case AccessCheck::NoPermission: return "NoPermission";
+    case AccessCheck::NotSameGroup: return "NotSameGroup";
+    case AccessCheck::AccessOK: return "AccessOK";
+    }
+    return "?";
+}
 
-    int ok = stat(device.c_str(), &sb);
+AccessCheck checkIfExistsAndHasAccess(string device)
+{
+    struct stat device_sb;
+
+    int ok = stat(device.c_str(), &device_sb);
 
     // The file did not exist.
-    if (ok) return AccessCheck::NotThere;
+    if (ok) return AccessCheck::NoSuchDevice;
+
+    int r = access(device.c_str(), R_OK);
+    int w = access(device.c_str(), W_OK);
+    if (r == 0 && w == 0)
+    {
+        // We have read and write access!
+        return AccessCheck::AccessOK;
+    }
+
+    // We are not permitted to read and write to this tty. Why?
+    // Lets check the group settings.
 
 #if defined(__APPLE__) && defined(__MACH__)
-        int groups[256];
+        int my_groups[256];
 #else
-        gid_t groups[256];
+        gid_t my_groups[256];
 #endif
     int ngroups = 256;
 
     struct passwd *p = getpwuid(getuid());
 
-    int rc = getgrouplist(p->pw_name, p->pw_gid, groups, &ngroups);
+    // What are the groups I am member of?
+    int rc = getgrouplist(p->pw_name, p->pw_gid, my_groups, &ngroups);
     if (rc < 0) {
         error("(wmbusmeters) cannot handle users with more than 256 groups\n");
     }
-    struct group *g = getgrgid(sb.st_gid);
 
-    for (int i=0; i<ngroups; ++i) {
-        if (groups[i] == g->gr_gid) {
-            return AccessCheck::AccessOK;
+    // What is the group of the tty?
+    struct group *device_group = getgrgid(device_sb.st_gid);
+
+    // Go through my groups to see if the device's group is in there.
+    for (int i=0; i<ngroups; ++i)
+    {
+        if (my_groups[i] == device_group->gr_gid)
+        {
+            // We belong to the same group as the tty. Typically dialout.
+            // Then there is some other reason for the lack of access.
+            return AccessCheck::NoPermission;
         }
     }
-
+    // We have examined all the groups that we belong to and yet not
+    // found the device's group. We can at least conclude that we
+    // being in the device's group would help, ie dialout.
     return AccessCheck::NotSameGroup;
 }
 
@@ -1372,6 +1449,11 @@ int countSetBits(int v)
         n++;
     }
     return n;
+}
+
+bool startsWith(string &s, string &prefix)
+{
+    return startsWith(s, prefix.c_str());
 }
 
 bool startsWith(string &s, const char *prefix)
@@ -1932,4 +2014,20 @@ bool isValidBps(string b)
     if (b == "57600") return true;
     if (b == "115200") return true;
     return false;
+}
+
+size_t findBytes(vector<uchar> &v, uchar a, uchar b, uchar c)
+{
+    size_t p = 0;
+    while (p+2 < v.size())
+    {
+        if (v[p+0] == a &&
+            v[p+1] == b &&
+            v[p+2] == c)
+        {
+            return p;
+        }
+        p++;
+    }
+    return (size_t)-1;
 }

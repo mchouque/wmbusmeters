@@ -39,11 +39,17 @@ typedef unsigned char uchar;
 uchar bcd2bin(uchar c);
 uchar revbcd2bin(uchar c);
 uchar reverse(uchar c);
+
+bool isHexChar(uchar c);
+
+bool isHexString(const char* txt, bool *invalid);
+bool isHexString(const std::string &txt, bool *invalid);
 bool hex2bin(const char* src, std::vector<uchar> *target);
 bool hex2bin(std::string &src, std::vector<uchar> *target);
 bool hex2bin(std::vector<uchar> &src, std::vector<uchar> *target);
 std::string bin2hex(const std::vector<uchar> &target);
 std::string bin2hex(std::vector<uchar>::iterator data, std::vector<uchar>::iterator end, int len);
+std::string bin2hex(std::vector<uchar> &data, int offset, int len);
 std::string safeString(std::vector<uchar> &target);
 void strprintf(std::string &s, const char* fmt, ...);
 std::string tostrprintf(const char* fmt, ...);
@@ -168,14 +174,20 @@ void eatWhitespace(std::vector<char> &v, std::vector<char>::iterator &i, bool *e
 std::string eatToSkipWhitespace(std::vector<char> &v, std::vector<char>::iterator &i, int c, size_t max, bool *eof, bool *err);
 // Remove leading and trailing white space
 void trimWhitespace(std::string *s);
-// Returns true if device exists and this programs user, belongs
-// to the same group that the device belongs to.
-enum class AccessCheck { NotThere, NotSameGroup, Locked, AccessOK };
-AccessCheck checkIfExistsAndSameGroup(std::string device);
+// Returns AccessOK if device exists and is accessible.
+// NotSameGroup means that there is no permission and the groups do not match.
+// NoPermission means some other reason for no access. (missing rw etc)
+// Locked means that some other process has locked the tty.
+// NoSuchDevice means the tty does not exist.
+// NoProperResponse means that we talked to something, but we do not know what it is.
+enum class AccessCheck { NoSuchDevice, NoProperResponse, NoPermission, NotSameGroup, AccessOK };
+const char* toString(AccessCheck ac);
+AccessCheck checkIfExistsAndHasAccess(std::string device);
 // Count the number of 1:s in the binary number v.
 int countSetBits(int v);
 
 bool startsWith(std::string &s, const char *prefix);
+bool startsWith(std::string &s, std::string &prefix);
 
 // Given alfa=beta it returns "alfa":"beta"
 std::string makeQuotedJson(std::string &s);
@@ -213,5 +225,11 @@ std::string lookForExecutable(std::string prog, std::string bin_dir, std::string
 // Extract from "ppm=5 radix=7" and put key values into map.
 bool parseExtras(std::string s, std::map<std::string,std::string> *extras);
 void checkIfMultipleWmbusMetersRunning();
+
+size_t findBytes(std::vector<uchar> &v, uchar a, uchar b, uchar c);
+
+#ifndef FUZZING
+#define FUZZING false
+#endif
 
 #endif

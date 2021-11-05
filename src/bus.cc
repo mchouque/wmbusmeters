@@ -55,6 +55,7 @@ BusManager::BusManager(shared_ptr<SerialCommunicationManager> serial_manager,
     : serial_manager_(serial_manager),
         meter_manager_(meter_manager),
         bus_devices_mutex_("bus_devices_mutex"),
+        bus_send_queue_mutex_("bus_send_queue_mutex"),
         printed_warning_(true)
 {
 }
@@ -90,10 +91,10 @@ void BusManager::openBusDeviceAndPotentiallySetLinkmodes(Configuration *config, 
     }
     string using_link_modes = lms.hr();
 
-    string bus = detected->specified_device.alias.c_str();
+    string bus = detected->specified_device.bus_alias.c_str();
     if (bus != "")
     {
-        bus = bus+" ";
+        bus = bus+"=";
     }
     string id = detected->found_device_id.c_str();
     if (id != "") id = "["+id+"]";
@@ -211,6 +212,10 @@ shared_ptr<WMBus> BusManager::createWmbusObject(Detected *detected, Configuratio
     case DEVICE_RAWTTY:
         verbose("(rawtty) on %s\n", detected->found_file.c_str());
         wmbus = openRawTTY(*detected, serial_manager_, serial_override);
+        break;
+    case DEVICE_HEXTTY:
+        verbose("(hextty) on %s\n", detected->found_file.c_str());
+        wmbus = openHexTTY(*detected, serial_manager_, serial_override);
         break;
     case DEVICE_RTLWMBUS:
         wmbus = openRTLWMBUS(*detected, config->bin_dir, config->daemon, serial_manager_, serial_override);
@@ -382,7 +387,7 @@ void BusManager::detectAndConfigureWmbusDevices(Configuration *config, Detection
                 continue;
             }
         }
-        if (specified_device.file == "" && specified_device.command == "")
+        if (specified_device.file == "" && specified_device.command == "" && specified_device.hex == "")
         {
             // File/tty/command not specified, use auto scan later to find actual device file/tty.
             must_auto_find_ttys |= usesTTY(specified_device.type);
@@ -402,6 +407,12 @@ void BusManager::detectAndConfigureWmbusDevices(Configuration *config, Detection
             Detected detected = detectWMBusDeviceWithCommand(specified_device, config->default_device_linkmodes, serial_manager_);
             specified_device.handled = true;
             openBusDeviceAndPotentiallySetLinkmodes(config, "config", &detected);
+        }
+        if (specified_device.hex != "")
+        {
+            Detected detected = detectWMBusDeviceWithFileOrHex(specified_device, config->default_device_linkmodes, serial_manager_);
+            openBusDeviceAndPotentiallySetLinkmodes(config, "config", &detected);
+            specified_device.handled = true;
         }
         if (specified_device.file != "")
         {
@@ -449,7 +460,7 @@ void BusManager::detectAndConfigureWmbusDevices(Configuration *config, Detection
                 continue;
             }
 
-            Detected detected = detectWMBusDeviceWithFile(specified_device, config->default_device_linkmodes, serial_manager_);
+            Detected detected = detectWMBusDeviceWithFileOrHex(specified_device, config->default_device_linkmodes, serial_manager_);
 
             if (detected.found_type == DEVICE_UNKNOWN)
             {
@@ -739,11 +750,50 @@ SpecifiedDevice *BusManager::find_specified_device_from_detected(Configuration *
     return NULL;
 }
 
-WMBus* BusManager::findBus(string name)
+WMBus* BusManager::findBus(string bus_alias)
 {
     for (auto &w : bus_devices_)
     {
-        if (w->alias() == name) return w.get();
+        if (w->busAlias() == bus_alias) return w.get();
     }
     return NULL;
+}
+
+void BusManager::queueSendBusContent(const SendBusContent &sbc)
+{
+    LOCK_BUS_SEND_QUEUE(queue_content);
+
+    bus_send_queue_.push_back(sbc);
+
+    debug("(bus) queued send %s bus=%s %s\n", toString(sbc.starts_with), sbc.bus.c_str(), sbc.content.c_str());
+}
+
+void BusManager::sendQueue()
+{
+    LOCK_BUS_SEND_QUEUE(send_content);
+
+    for (SendBusContent &sbc : bus_send_queue_)
+    {
+        WMBus *bus = findBus(sbc.bus);
+        if (bus == NULL)
+        {
+            warning("(bus) could not send content to non-existant bus, %s bus=%s %s\n", toString(sbc.starts_with), sbc.bus.c_str(), sbc.content.c_str());
+            continue;
+        }
+        if (sbc.content.length() > 250*2)
+        {
+            warning("(bus) could not send too long hex, maximum is 500 hex chars, %s bus=%s %s\n", toString(sbc.starts_with), sbc.bus.c_str(), sbc.content.c_str());
+            continue;
+        }
+        vector<uchar> content;
+        bool ok = hex2bin(sbc.content, &content);
+        if (!ok)
+        {
+            warning("(bus) could not send bad hex, %s bus=%s %s\n", toString(sbc.starts_with), sbc.bus.c_str(), sbc.content.c_str());
+            continue;
+        }
+        bus->sendTelegram(sbc.starts_with, content);
+        notice("Sent %d bytes to bus %s\n", sbc.content.length()/2, sbc.bus.c_str());
+    }
+    bus_send_queue_.clear();
 }

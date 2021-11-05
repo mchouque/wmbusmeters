@@ -53,7 +53,6 @@ struct Configuration
     std::string listento_override;
     bool useconfig {};
     std::string config_root;
-    bool reload {};
     bool need_help {};
     bool silent {};
     bool verbose {};
@@ -62,7 +61,8 @@ struct Configuration
     bool debug {};
     bool trace {};
     AddLogTimestamps addtimestamps {};
-    bool internaltesting {}; // Only for testing! When true, shorten all timeouts.
+    bool internaltesting {}; // Not currently used. Was used for speeding up testing. I.e. it shortened all timeouts.
+                             // Might be needed in the future. Therefore it is still here.
     bool logtelegrams {};
     bool meterfiles {};
     std::string meterfiles_dir;
@@ -84,6 +84,7 @@ struct Configuration
     bool list_shell_envs {};
     bool list_fields {};
     bool list_meters {};
+    bool list_units {};
     std::string list_meters_search;
     // When asking for envs or fields, this is the meter type to list for.
     std::string list_meter;
@@ -111,16 +112,20 @@ struct Configuration
     std::vector<Unit> conversions;
     std::vector<std::string> selected_fields;
     std::vector<MeterInfo> meters;
-    std::vector<std::string> jsons; // Additional jsons to always add.
+    std::vector<std::string> extra_constant_fields; // Additional constant fields to always add to json.
+    // These extra constant fields can also be part of selected with selectfields.
+    std::vector<SendBusContent> send_bus_content; // Telegrams used to wake up a meter for reading or mbus read-out requests.
 
     ~Configuration() = default;
 };
 
 shared_ptr<Configuration> loadConfiguration(string root, string device_override, string listento_override);
 
+void parseMeterConfig(Configuration *c, vector<char> &buf, string file);
 void handleConversions(Configuration *c, string s);
 void handleSelectedFields(Configuration *c, string s);
-bool handleDevice(Configuration *c, string devicefile);
+void handleAddedFields(Configuration *c, string s);
+bool handleDeviceOrHex(Configuration *c, string devicefilehex);
 
 enum class LinkModeCalculationResultType
 {

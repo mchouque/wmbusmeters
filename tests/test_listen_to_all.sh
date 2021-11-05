@@ -50,6 +50,11 @@ Received telegram from: 10101010
                   type: Electricity meter (0x02)
                    ver: 0x02
                 driver: amiplus
+Received telegram from: 00254358
+          manufacturer: (DEV) Develco Products, Denmark (0x10b6)
+                  type: Electricity meter (0x02)
+                   ver: 0x00
+                driver: amiplus
 Received telegram from: 34333231
           manufacturer: (TCH) Techem Service (0x5068)
                   type: Warm water (0x62)
@@ -148,7 +153,17 @@ Received telegram from: 86868686
                   type: Water meter (0x07)
                    ver: 0x13
                 driver: hydrodigit
+Received telegram from: 67452301
+          manufacturer: (BMT) BMETERS, Italy (0x9b4)
+                  type: Warm Water (30°C-90°C) meter (0x06)
+                   ver: 0x13
+                driver: hydrodigit
 Received telegram from: 72727272
+          manufacturer: (AXI) UAB Axis Industries, Lithuania (0x709)
+                  type: Water meter (0x07)
+                   ver: 0x10
+                driver: q400
+Received telegram from: 72727273
           manufacturer: (AXI) UAB Axis Industries, Lithuania (0x709)
                   type: Water meter (0x07)
                    ver: 0x10
@@ -269,6 +284,54 @@ Received telegram from: 93929190
                   type: Water meter (0x07)
                    ver: 0x7b
                 driver: dme_07
+Received telegram from: 60897379
+          manufacturer: (HYD) Hydrometer (0x2324)
+                  type: Water meter (0x07)
+                   ver: 0x8b
+                driver: hydrus
+Received telegram from: 60904720
+          manufacturer: (HYD) Hydrometer (0x2324)
+                  type: Warm Water (30°C-90°C) meter (0x06)
+                   ver: 0x8b
+                driver: hydrus
+Received telegram from: 18001698
+          manufacturer: (HYD) Hydrometer (0x2324)
+                  type: Water meter (0x07)
+                   ver: 0x85
+                driver: izar
+Received telegram from: 61070071
+          manufacturer: (AAA) Aventies, Germany (0x421)
+                  type: Water meter (0x07)
+                   ver: 0x25
+      Concerning meter: 61070071
+          manufacturer: (AAA) Aventies, Germany (0x421)
+                  type: Water meter (0x07)
+                   ver: 0x25
+                driver: aventieswm aventieswm
+Received telegram from: 00043094
+          manufacturer: (AMX) APATOR METRIX, Poland (0x5b8)
+                  type: Gas meter (0x03)
+                   ver: 0x01
+                driver: unismart
+Received telegram from: 71727374
+          manufacturer: (BMT) BMETERS, Italy (0x9b4)
+                  type: Heat/Cooling load meter (0x0d)
+                   ver: 0x0b
+                driver: hydrocalm3
+Received telegram from: 00013482
+          manufacturer: (WEP) Weptech elektronik, Germany (0x5cb0)
+                  type: Room sensor (eg temperature or humidity) (0x1b)
+                   ver: 0x02
+                driver: munia
+Received telegram from: 37027095
+          manufacturer: (QDS) Qundis, Germany (0x4493)
+                  type: Radio converter (meter side) (0x37)
+                   ver: 0x23
+      Concerning meter: 67228058
+          manufacturer: (QDS) Qundis, Germany (0x4493)
+                  type: Heat meter (0x04)
+                   ver: 0x23
+                driver: qheat
 EOF
 
 RES=$($PROG --logfile=$LOGFILE --t1 simulations/simulation_t1.txt 2>&1)

@@ -39,7 +39,7 @@ enum class PARITY { NONE, EVEN, ODD };
 struct SerialDevice
 {
     // If fail_if_not_ok then forcefully exit the program if cannot be opened.
-    virtual AccessCheck open(bool fail_if_not_ok) = 0;
+    virtual bool open(bool fail_if_not_ok) = 0;
     virtual void close() = 0;
     // Explicitly closed fd == -1
     virtual bool isClosed() = 0;
@@ -53,6 +53,7 @@ struct SerialDevice
     virtual int fd() = 0;
     virtual bool opened() = 0;
     virtual bool working() = 0;
+    virtual bool resetting() = 0; // The serial device is working but can lack a valid file descriptor.
     // Used when connecting stdin to a tty driver for testing.
     virtual bool readonly() = 0;
     // Mark this device so that it is ignored by the select/callback event loop.
@@ -105,6 +106,11 @@ struct SerialCommunicationManager
     virtual int startRegularCallback(std::string name, int seconds, function<void()> callback) = 0;
     virtual void stopRegularCallback(int id) = 0;
 
+    // Verify if the device can be accessed and verbose any failures.
+    virtual AccessCheck checkAccess(std::string device,
+                                    shared_ptr<SerialCommunicationManager> manager, // Silly but for now, needs shared pointer to itself....
+                                    std::string extra_info = "",
+                                    function<AccessCheck(string,shared_ptr<SerialCommunicationManager>)> extra_probe = NULL) = 0;
     // List all real serial devices (avoid pseudo ttys)
     virtual std::vector<std::string> listSerialTTYs() = 0;
     // Return a serial device for the given device, if it exists! Otherwise NULL.
